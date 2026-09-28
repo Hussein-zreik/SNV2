@@ -508,8 +508,74 @@
     return changed;
   }
 
+  /* ---------- partial Generate (Manual mode: Settings → Generate) ----------
+     Every cell belongs to one PART: 'nights' (N7), 'weekends' (a Sat/Sun day
+     shift) or 'weekdays' (a Mon-Fri day/evening shift).
+
+     The fortnight is PLANNED ONCE, in full — every count, turn, night and backfill
+     worked out exactly as a normal Generate would — and only the ticked parts are
+     shown. The rest of the plan is kept (index.html stores it) and later passes
+     REVEAL more of that same plan. Re-planning per pass is not equivalent: each
+     pass would pick different RNs (e.g. for a backfilled night) than the slots the
+     earlier pass reserved, leaving some nurses over and others under their split.
+
+     planFortnight(ctx,off,keep)  the full plan; `keep` ({ id: [14] }) cells that are
+                                  not OFF are treated as entries and planned around
+     pickParts(ctx,off,plan,fill,keep)
+                                  the plan's cells in the `fill` parts, plus `keep`
+                                  and requests; everything else OFF
+     revealParts(ctx,off,plan,grid,add)
+                                  adds the plan's cells in the `add` parts to empty,
+                                  non-request cells of `grid` — never taking a nurse
+                                  over their week's split (a hand edit made between
+                                  passes wins; the banner shows what is left short)
+     Rows are by RN index. */
+  const partOf=(s,d)=>s==='N7'?'nights':(d%7>=5?'weekends':'weekdays');
+  const reqOf=(ctx,off)=>{const base=addDays(ctx.anchorMonday,off*14),K=Array.from({length:14},(_,d)=>isoKey(addDays(base,d)));
+    return (i,d)=>{const o=ctx.overrides[K[d]];return o&&o[ctx.ids[i]]!==undefined?o[ctx.ids[i]]:null;};};
+  const keptOf=(ctx,keep)=>(i,d)=>{const r=keep&&keep[ctx.ids[i]];return r&&r[d]&&r[d]!=='OFF'?r[d]:null;};
+  function planFortnight(ctx,off,keep){
+    const base=addDays(ctx.anchorMonday,off*14),ov={},kept=keptOf(ctx,keep);
+    for(const k in ctx.overrides)ov[k]={...ctx.overrides[k]};
+    for(let i=0;i<ctx.N;i++)for(let d=0;d<14;d++){
+      const s=kept(i,d);if(s===null)continue;
+      const k=isoKey(addDays(base,d));
+      if(!ov[k])ov[k]={};
+      if(ov[k][ctx.ids[i]]===undefined)ov[k][ctx.ids[i]]=s;
+    }
+    return computeSchedule({...ctx,overrides:ov,frozen:{},manualMode:false},off,true,true).sh;
+  }
+  function pickParts(ctx,off,plan,fill,keep){
+    const kept=keptOf(ctx,keep),req=reqOf(ctx,off);
+    return plan.map((row,i)=>row.map((s,d)=>{
+      const k=kept(i,d);if(k!==null)return k;
+      const r=req(i,d);if(r!==null)return r;
+      return s!=='OFF'&&fill[partOf(s,d)]?s:'OFF';
+    }));
+  }
+  function revealParts(ctx,off,plan,grid,add){
+    WORK=ctx.work;
+    const req=reqOf(ctx,off),out=grid.map(r=>r.slice());
+    const isEntry=s=>WORK.has(s)||LEAVE.has(s);
+    for(let i=0;i<out.length;i++){
+      const split=splitOf(ctx.groups[i]);
+      for(const w of [0,1]){
+        let n=0;for(let d=w*7;d<w*7+7;d++)if(isEntry(out[i][d]))n++;
+        for(let d=w*7;d<w*7+7&&n<split[w];d++){
+          const s=plan[i]&&plan[i][d];
+          if(!s||s==='OFF'||out[i][d]!=='OFF'||req(i,d)!==null||!add[partOf(s,d)])continue;
+          out[i][d]=s;n++;
+        }
+      }
+    }
+    return out;
+  }
+  // one-shot: plan and show only `fill` (what a first Generate does)
+  function generateParts(ctx,off,fill,keep){return pickParts(ctx,off,planFortnight(ctx,off,keep),fill,keep);}
+
   const Engine={getMonday,addDays,isoKey,mkRng,shuffleArr,maxRunLen,streak,dtc,
-    groupSeq,pairAt,turnFor,repairRuns,swapRepair,pickWeekdaySubset,computeSchedule,rebalanceRow};
+    groupSeq,pairAt,turnFor,repairRuns,swapRepair,pickWeekdaySubset,computeSchedule,rebalanceRow,
+    partOf,planFortnight,pickParts,revealParts,generateParts};
 
   if(typeof module!=='undefined'&&module.exports)module.exports=Engine;   // Node
   if(root){                                                               // browser

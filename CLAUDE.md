@@ -14,7 +14,7 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 ```bash
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
-npm run test:unit      # 43 engine unit tests in plain Node, ~0.5s
+npm run test:unit      # 48 engine unit tests in plain Node, ~0.5s
 npm test               # full rule audit driving the app in headless Chromium, ~30s
 ```
 
@@ -160,6 +160,21 @@ shows a red `RN: 5 duties in week 1 (max 4)`.
   nurse's row** back to the split (removing or adding app-made duties in the same week).
   A night it drops is **not** backfilled — it shows as short for the manager.
 - **Manual mode:** the cell is changed exactly as typed, with no rebalancing.
+
+**Partial Generate (Settings → Generate, Manual mode only).** Ticks for Weekdays /
+Weekends / Nights (`genParts`, synced). A cell's part comes from `Engine.partOf()`. The
+first Generate **plans the whole fortnight once** (`Engine.planFortnight`) and shows only
+the ticked parts (`pickParts`). The full plan is kept in `genPlan[cycleMonday]`, and
+`genDone[cycleMonday]` records which parts are in. Unticked parts are therefore
+*reserved*: a night/weekend-turn nurse gets only the rest of their split on weekdays.
+A later Generate with a new part ticked **reveals** that part from the same plan
+(`revealParts`), keeping the grid and never taking a nurse over their split. Do not
+re-plan per pass — each pass would pick different RNs than the slots the earlier pass
+reserved (a sweep showed ~100 split breaks per 150 seeds when it did). Once every ticked
+part is in, the button reads **Regenerate** and re-plans only the ticked parts around the
+rest. `genPlan` is dropped when all three parts are in. `genDone`/`genPlan` are cleared
+wherever `frozen` is (Clear, Regenerate in Auto, Rebuild, Free the night turn). While a
+fortnight is partly generated, the banner shows what is left instead of staffing checks.
 
 `nightBlockers()` finds entries sitting on a night-turn nurse's night days. The banner
 only raises them when the night actually ended up short (most are backfilled).

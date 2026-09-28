@@ -414,5 +414,60 @@ test('rebalanceRow: entries are never removed, even when over', () => {
   for (const d of [0, 1, 2, 3, 4]) assert.equal(sh[6][d], 'D6');
 });
 
+/* ---------- partial Generate (Settings → Generate) ---------- */
+const ALL = { weekdays: true, weekends: true, nights: true };
+const rowsById = (c, g) => Object.fromEntries(g.map((r, i) => [c.ids[i], r]));
+test('generateParts: all parts == a normal full generate', () => {
+  for (let s = 0; s < 10; s++) {
+    const c = ctx(19, {}, { seed: s * 7919 });
+    assert.deepEqual(Engine.generateParts(c, 0, ALL, null), Engine.computeSchedule(c, 0, true, true).sh);
+  }
+});
+test('generateParts: weekdays only — no nights, no weekend, turns reserved', () => {
+  for (let s = 0; s < 10; s++) {
+    const c = ctx(19, {}, { seed: s * 7919 }), t = Engine.turnFor(c, 0);
+    const g = Engine.generateParts(c, 0, { weekdays: true, weekends: false, nights: false }, null);
+    for (let i = 0; i < 19; i++) for (let d = 0; d < 14; d++) {
+      assert.notEqual(g[i][d], 'N7', `no nights (n${i} d${d})`);
+      if (d % 7 >= 5) assert.equal(g[i][d], 'OFF', `no weekend (n${i} d${d})`);
+    }
+    for (const i of [...t.nightA, ...t.nightB]) assert.equal(g[i].filter(x => WORK.has(x)).length, 0, `night nurse n${i} reserved`);
+    for (const i of t.wkndA) assert.equal(inWeek(g[i], 0), SPLIT(i)[0] - 2, `weekend nurse n${i}: rest of week 1 only`);
+  }
+});
+test('reveal parts one at a time -> everyone on the split, with requests', () => {
+  const orders = [['weekdays', 'nights', 'weekends'], ['nights', 'weekends', 'weekdays'], ['weekends', 'weekdays', 'nights']];
+  const types = ['D6', 'S9', 'REQ', 'OFF', 'VAC', 'N7'];
+  for (let s = 0; s < 40; s++) for (const ord of orders) {
+    const rng = Engine.mkRng(s * 977 + 1), over = {};
+    for (let k = 0; k < 5; k++) (over[DAY(Math.floor(rng() * 14))] ||= {})['n' + Math.floor(rng() * 19)] = types[Math.floor(rng() * types.length)];
+    const c = ctx(19, over, { seed: s * 7919 });
+    const plan = Engine.planFortnight(c, 0, null);
+    let g = Engine.pickParts(c, 0, plan, { [ord[0]]: true }, null);
+    for (const p of ord.slice(1)) {
+      const prev = g.map(r => r.slice());
+      g = Engine.revealParts(c, 0, plan, g, { [p]: true });
+      for (let i = 0; i < 19; i++) for (let d = 0; d < 14; d++) if (prev[i][d] !== 'OFF') assert.equal(g[i][d], prev[i][d], 'earlier pass kept');
+    }
+    assert.deepEqual(g, plan, `seed ${s} ${ord}: staged == one full generate`);
+    for (let i = 0; i < 19; i++) for (const w of [0, 1]) assert.equal(inWeek(g[i], w), SPLIT(i)[w], `seed ${s} n${i} week ${w + 1}`);
+    for (let d = 0; d < 14; d++) assert.equal(cnt(g, d, 'N7'), 2, `night ${d}`);
+  }
+});
+test('revealParts never takes a nurse over their split (hand edit between passes)', () => {
+  const c = ctx(19), t = Engine.turnFor(c, 0), n = t.nightA[0];
+  const plan = Engine.planFortnight(c, 0, null);
+  const g = Engine.pickParts(c, 0, plan, { weekdays: true }, null);
+  g[n][2] = 'D6'; g[n][3] = 'D6';                        // manager hand-types two weekday duties
+  const out = Engine.revealParts(c, 0, plan, g, { nights: true });
+  assert.equal(inWeek(out[n], 0), 4, 'nights revealed only up to the split');
+  assert.equal(out[n][2], 'D6'); assert.equal(out[n][3], 'D6');
+});
+test('generateParts: requests always show, even in an unticked part', () => {
+  const c = ctx(19, { [DAY(5)]: { n7: 'VAC' }, [DAY(3)]: { n4: 'N7' } });
+  const g = Engine.generateParts(c, 0, { weekdays: true, weekends: false, nights: false }, null);
+  assert.equal(g[7][5], 'VAC'); assert.equal(g[4][3], 'N7');
+});
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail === 0 ? 0 : 1);

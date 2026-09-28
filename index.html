@@ -721,6 +721,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <button class="sett-tab" data-tab="min"    onclick="settTab('min')">Staffing minimums</button>
       <button class="sett-tab" data-tab="shifts" onclick="settTab('shifts')">Shifts</button>
       <button class="sett-tab" data-tab="staff"  onclick="settTab('staff')">Support staff</button>
+      <button class="sett-tab" data-tab="gen"    onclick="settTab('gen')">Generate</button>
       <button class="sett-tab" data-tab="rules"  onclick="settTab('rules')">Fatigue rules</button>
       <button class="sett-tab" data-tab="data"   onclick="settTab('data')">Roster &amp; data</button>
     </div>
@@ -754,6 +755,17 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="sett-panel" id="settPanel-staff" hidden>
       <div class="sett-note">Support-staff groups (not part of the RN rules). Rename a group, and add or remove people in it.</div>
       <div id="settStaffBody"></div>
+    </div>
+
+    <div class="sett-panel" id="settPanel-gen" hidden>
+      <div class="fatigue-box">
+        <h4 class="fatigue-h">What Generate fills <span class="fatigue-sub">(Manual mode — Auto mode always fills everything)</span></h4>
+        <label class="fatigue-row"><input type="checkbox" id="gpWeekdays" onchange="setGenPart('weekdays',this.checked)"> <b>Weekdays</b> — Mon–Fri day &amp; evening shifts</label>
+        <label class="fatigue-row"><input type="checkbox" id="gpWeekends" onchange="setGenPart('weekends',this.checked)"> <b>Weekends</b> — the Sat/Sun day turn</label>
+        <label class="fatigue-row"><input type="checkbox" id="gpNights" onchange="setGenPart('nights',this.checked)"> <b>Nights</b> — the night turn (N7)</label>
+        <div class="sett-note" style="margin-top:var(--sp-2)">Unticked parts are left blank but <b>reserved</b>: a nurse on the night or weekend turn only gets the rest of their 4/3 · 3/4 on weekdays. Tick another part later and press <b>Generate</b> again — it fills just the new part and keeps everything already on the grid. Once every ticked part is in, the button becomes <b>Regenerate</b> and redoes only the ticked parts.</div>
+        <div class="sett-note" id="genStatus" style="margin-top:var(--sp-2)"></div>
+      </div>
     </div>
 
     <div class="sett-panel" id="settPanel-rules" hidden>
@@ -1070,6 +1082,17 @@ function nightListView(){return Array.isArray(nightList)?nightList:ids.slice();}
 // first edit turns the default into a concrete, customised list
 function materializeNightList(){if(!Array.isArray(nightList))nightList=ids.slice();}
 // advisory fatigue rules (display-only warnings in the health banner)
+// Settings → Generate: which parts the Manual-mode Generate button fills, and
+// which parts each generated fortnight already has ({ cycleMonday: [part,...] }).
+const GEN_PARTS=['weekdays','weekends','nights'];
+const GEN_LABEL={weekdays:'Weekdays',weekends:'Weekends',nights:'Nights'};
+let genParts={weekdays:true,weekends:true,nights:true};
+let genDone={};
+let genPlan={};   // { cycleMonday: { id: [14] } } the full plan while parts are still to come
+function ensureGenParts(){if(!genParts||typeof genParts!=='object')genParts={};
+  for(const p of GEN_PARTS)if(typeof genParts[p]!=='boolean')genParts[p]=true;}
+// the parts a fortnight has — a generated one saved before this existed has them all
+function partsDone(gk){return !frozen[gk]?[]:(Array.isArray(genDone[gk])?genDone[gk]:GEN_PARTS.slice());}
 let fatigue={turnaround:true, maxNights:8, minRest:1};  // night→day next day; max N7/calendar-month; min days off between working stretches (minRest<=1 = off)
 function ensureFatigue(){if(!fatigue||typeof fatigue!=='object')fatigue={};
   if(typeof fatigue.turnaround!=='boolean')fatigue.turnaround=true;
@@ -1117,6 +1140,8 @@ const PERSIST=[
   {k:'committedCycles',sync:1,undo:1,get:()=>committedCycles,apply:s=>{if(s.committedCycles&&typeof s.committedCycles==='object')committedCycles=s.committedCycles;}, set:v=>{committedCycles=clone(v);}},
   {k:'cycleSeeds', sync:1,undo:1,get:()=>cycleSeeds,      apply:s=>{if(s.cycleSeeds&&typeof s.cycleSeeds==='object')cycleSeeds=s.cycleSeeds;},  set:v=>{cycleSeeds=clone(v);}},
   {k:'frozen',     sync:1,undo:1,get:()=>frozen,          apply:s=>{frozen=(s.frozen&&typeof s.frozen==='object')?s.frozen:{};},                set:v=>{frozen=clone(v);}},
+  {k:'genPlan',    sync:1,undo:1,get:()=>genPlan,         apply:s=>{genPlan=(s.genPlan&&typeof s.genPlan==='object')?s.genPlan:{};},            set:v=>{genPlan=clone(v);}},
+  {k:'genDone',    sync:1,undo:1,get:()=>genDone,         apply:s=>{genDone=(s.genDone&&typeof s.genDone==='object')?s.genDone:{};},            set:v=>{genDone=clone(v);}},
   {k:'flags',      sync:1,undo:1,get:()=>flags,           apply:s=>{flags=(s.flags&&typeof s.flags==='object')?s.flags:{};},                    set:v=>{flags=clone(v);}},
   {k:'notes',      sync:1,undo:1,get:()=>notes,           apply:s=>{notes=(s.notes&&typeof s.notes==='object')?s.notes:{};},                    set:v=>{notes=clone(v);}},
   {k:'startDate',  sync:1,      get:()=>document.getElementById('startDate').value||startDateStr, apply:s=>{if(typeof s.startDate==='string')startDateStr=s.startDate;}},
@@ -1126,6 +1151,7 @@ const PERSIST=[
   {k:'defVac',     sync:1,      get:()=>defVac,           apply:s=>{if(typeof s.defVac==='number')defVac=s.defVac;}},
   {k:'staffLabels',sync:1,      get:()=>staffLabels,      apply:s=>{if(s.staffLabels&&typeof s.staffLabels==='object')staffLabels=s.staffLabels;}},
   {k:'customShifts',sync:1,     get:()=>customShifts,     apply:s=>{if(Array.isArray(s.customShifts))customShifts=s.customShifts;}},
+  {k:'genParts',   sync:1,      get:()=>genParts,         apply:s=>{if(s.genParts&&typeof s.genParts==='object')genParts=s.genParts; ensureGenParts();}},
   {k:'nightList',  sync:1,      get:()=>nightList,        apply:s=>{nightList=Array.isArray(s.nightList)?s.nightList.map(String):null;}},
   // per-device only (never synced): applied by loadState, not applyStateObject
   {k:'theme',      device:1,    get:()=>theme},
@@ -1581,6 +1607,18 @@ function renderBanner(){
     el.innerHTML=`<span class="bic">▦</span><div>This fortnight is <b>empty</b>. Add staff requests in <b>Requests</b>${reqCount?` (<b>${reqCount}</b> entered)`:''}, then press <b>Generate</b> to fill it while respecting the rules, turns and requests.</div>`;
     return;
   }
+  // Part-generated fortnight (Settings → Generate): the blank parts are reserved,
+  // not missing, so say what is in and what is left instead of flagging every
+  // reserved night/weekend as short. A week over its split is still flagged.
+  const doneParts=partsDone(cycleStartISO(cycleOffset));
+  if(doneParts.length&&doneParts.length<GEN_PARTS.length){
+    const cr0=conflictReport(cycleOffset,sh);
+    const over=cr0.weekOver.map(o=>`<b>${escapeHtml(names[o.i])}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`);
+    const left=GEN_PARTS.filter(p=>!doneParts.includes(p)).map(p=>GEN_LABEL[p]);
+    el.className='banner'+(over.length?' bad':'');
+    el.innerHTML=`<span class="bic">▦</span><div>${over.length?over.join(', ')+' &nbsp;·&nbsp; ':''}Partly generated: <b>${doneParts.map(p=>GEN_LABEL[p]).join(', ')}</b>. Still to generate: <b>${left.join(', ')}</b> — tick ${left.length>1?'them':'it'} in <b>Settings → Generate</b>, then press <b>Generate</b>. Staffing checks run once every part is in.</div>`;
+    return;
+  }
   // 1) days below minimum staffing (any shift type under DAILY_MIN)
   const short=[];
   for(let d=0;d<14;d++)if(dayShort(sh,d)||nightShort(sh,d))short.push(`${DAYS[d%7]} ${fmt(days[d])}`);
@@ -1733,9 +1771,21 @@ function setFatigue(key,val){
   else if(key==='minRest')fatigue.minRest=Math.max(1,Math.min(7,parseInt(val)||1));
   render();saveState();renderSettings();   // per-team setting, not an undoable schedule edit
 }
+function setGenPart(part,on){
+  ensureGenParts();genParts[part]=!!on;
+  updateModeUI();saveState();renderSettings();   // a team setting, not an undoable schedule edit
+}
+function renderGenTab(){
+  ensureGenParts();
+  for(const p of GEN_PARTS){const e=document.getElementById('gp'+GEN_LABEL[p]);if(e)e.checked=genParts[p];}
+  const st=document.getElementById('genStatus');if(!st)return;
+  const done=partsDone(cycleStartISO(cycleOffset));
+  st.innerHTML=!done.length?'This fortnight has not been generated yet.'
+    :`This fortnight has: <b>${done.map(p=>GEN_LABEL[p]).join(', ')}</b>${done.length<3?` — still to generate: <b>${GEN_PARTS.filter(p=>!done.includes(p)).map(p=>GEN_LABEL[p]).join(', ')}</b>`:''}.`;
+}
 function renderSettings(){
   const box=document.getElementById('settBody');if(!box)return;
-  ensureFatigue();
+  ensureFatigue();renderGenTab();
   const t=document.getElementById('fgTurn');if(t)t.checked=fatigue.turnaround;
   const mn=document.getElementById('fgMaxN');if(mn)mn.value=fatigue.maxNights;
   const rs=document.getElementById('fgRest');if(rs)rs.value=fatigue.minRest;
@@ -1808,7 +1858,7 @@ function freeNightTurn(){
   for(const x of bl){const id=rid(x.i);
     for(const d of x.blocked){const k=isoKey(days[d]);const o=overrides[k];
       if(o&&o[id]!==undefined){delete o[id];if(!Object.keys(o).length)delete overrides[k];}}}
-  delete frozen[cycleStartISO(cycleOffset)];   // rebuild this fortnight with the nights freed
+  delete frozen[cycleStartISO(cycleOffset)];delete genDone[cycleStartISO(cycleOffset)];delete genPlan[cycleStartISO(cycleOffset)];   // rebuild this fortnight with the nights freed
   pushHistory(`Freed the night turn (cleared ${total} entr${total===1?'y':'ies'})`,b);
   render();saveState();renderSettings();
   toast(`Cleared ${total} blocking entr${total===1?'y':'ies'} — night turn restored`);
@@ -1995,7 +2045,7 @@ function rebuildAllCycles(){
   if(!confirm(`Rebuild ${n} generated fortnight${n>1?'s':''} with the current rules?\n\nRequests, holidays and vacations are kept. Any hand edits made after generating will be replaced.`))return;
   const b=snapshot();
   pushHistory(`Rebuilt ${n} generated fortnight${n>1?'s':''}`,b);
-  frozen={};cycleSeeds={};
+  frozen={};cycleSeeds={};genDone={};genPlan={};
   render();saveState();renderSettings();
   toast(`${n} fortnight${n>1?'s':''} rebuilt with the current rules`);
 }
@@ -2422,7 +2472,7 @@ function regen(){
   // baked (frozen) grid + its saved seed for this fortnight, so a stale grid from
   // an earlier version (e.g. old night logic) is replaced, not kept.
   const gk=cycleStartISO(cycleOffset);
-  delete frozen[gk];delete cycleSeeds[gk];
+  delete frozen[gk];delete cycleSeeds[gk];delete genDone[gk];delete genPlan[gk];
   seed=(Date.now()^Math.floor(Math.random()*1e9))>>>0;
   render();saveState();toast('This cycle regenerated with the current rules — requests kept');
 }
@@ -2511,19 +2561,53 @@ function setMode(manual){
                   :'Auto mode — the schedule fills automatically');
 }
 function toggleMode(){setMode(!manualMode);}     // kept for any existing callers
+// What the Generate button will do on this fortnight, from the ticks in
+// Settings → Generate: add the ticked parts it doesn't have yet (keeping the
+// grid), or — when it already has every ticked part — regenerate those parts.
+function genNext(gk){
+  ensureGenParts();
+  const ticked=GEN_PARTS.filter(p=>genParts[p]),done=partsDone(gk);
+  const add=ticked.filter(p=>!done.includes(p));
+  return {ticked,done,add,regen:!add.length};
+}
 function generateFortnight(){
-  const gk=cycleStartISO(cycleOffset),before=snapshot();
-  delete frozen[gk];                                             // fresh fill (also for Regenerate)
-  cycleSeeds[gk]=(Date.now()^Math.floor(Math.random()*1e9))>>>0;  // fresh seed for THIS fortnight only
+  const gk=cycleStartISO(cycleOffset),plan=genNext(gk);
+  if(!plan.ticked.length){toast('Nothing ticked — choose what to generate in Settings → Generate');return;}
+  const before=snapshot(),ctx=schedCtx();
+  const fillOf=list=>{const f={};for(const p of GEN_PARTS)f[p]=list.includes(p);return f;};
+  const byId=rows=>{const o={};for(let i=0;i<N;i++)o[ids[i]]=rows[i].slice();return o;};
+  const byIdx=obj=>Array.from({length:N},(_,i)=>obj&&obj[ids[i]]?obj[ids[i]].slice():Array(14).fill('OFF'));
+  let grid,parts,regenerated=false;
+  if(frozen[gk]&&!plan.regen){
+    // ADD the ticked parts this fortnight doesn't have yet, from the plan made at
+    // the first Generate — so they fit the reserved slots exactly. Everything on
+    // the grid (hand edits included) is kept.
+    const full=genPlan[gk]?byIdx(genPlan[gk]):Engine.planFortnight(ctx,cycleOffset,frozen[gk]);
+    grid=Engine.revealParts(ctx,cycleOffset,full,computeSchedule(cycleOffset).sh,fillOf(plan.add));
+    parts=plan.add;genDone[gk]=GEN_PARTS.filter(p=>plan.done.includes(p)||plan.add.includes(p));
+  }else{
+    // FIRST Generate, or REGENERATE the ticked parts: plan the whole fortnight
+    // (around any parts that are kept) and show only the ticked parts.
+    regenerated=!!frozen[gk];
+    let keep=null;
+    if(frozen[gk]){keep={};
+      for(let i=0;i<N;i++){const row=frozen[gk][ids[i]];
+        if(row)keep[ids[i]]=row.map((x,d)=>x!=='OFF'&&plan.ticked.includes(Engine.partOf(x,d))?'OFF':x);}}
+    cycleSeeds[gk]=(Date.now()^Math.floor(Math.random()*1e9))>>>0;  // fresh seed for THIS fortnight only
+    const full=Engine.planFortnight(ctx,cycleOffset,keep);
+    grid=Engine.pickParts(ctx,cycleOffset,full,fillOf(plan.ticked),keep);
+    genPlan[gk]=byId(full);
+    parts=plan.ticked;genDone[gk]=regenerated?GEN_PARTS.filter(p=>plan.done.includes(p)):plan.ticked.slice();
+  }
   committedCycles[gk]=true;
-  // fill the gaps ONCE, then BAKE the result into a fixed grid so later edits
-  // change only the edited cell (the generator never re-runs on this fortnight).
-  const grid=computeSchedule(cycleOffset,true,false).sh;
-  const snap={};for(let i=0;i<N;i++)snap[ids[i]]=grid[i].slice();
-  frozen[gk]=snap;
-  pushHistory('Generated fortnight',before);
-  render();saveState();
-  toast('Fortnight generated');
+  // BAKE the result into a fixed grid so later edits change only the edited cell
+  frozen[gk]=byId(grid);
+  if(genDone[gk].length===GEN_PARTS.length)delete genPlan[gk];   // nothing left to reveal
+  const verb=regenerated?'Regenerated':'Generated',what=parts.map(p=>GEN_LABEL[p].toLowerCase()).join(', ');
+  pushHistory(`${verb} ${what}`,before);
+  render();saveState();renderSettings();
+  const left=GEN_PARTS.filter(p=>!genDone[gk].includes(p)).map(p=>GEN_LABEL[p].toLowerCase());
+  toast(`${verb}: ${what}${left.length?` — still to generate: ${left.join(', ')}`:''}`);
 }
 // Wipe this fortnight back to a blank sheet: the entries you typed, the flags and
 // comments on those 14 days, and the generated grid. Nothing outside the cycle is
@@ -2538,7 +2622,7 @@ function clearCycle(){
     +`Only these 14 days are affected. Undo (Ctrl+Z) puts everything back.`))return;
   const before=snapshot();
   for(const k of t.keys){delete overrides[k];delete staffShifts[k];delete flags[k];delete notes[k];}
-  delete frozen[t.gk];delete committedCycles[t.gk];delete cycleSeeds[t.gk];
+  delete frozen[t.gk];delete committedCycles[t.gk];delete cycleSeeds[t.gk];delete genDone[t.gk];delete genPlan[t.gk];
   pushHistory(`Cleared fortnight ${span} (${joinList(parts)})`,before);
   render();saveState();
   toast('Fortnight cleared — Undo (Ctrl+Z) restores it');
@@ -2552,7 +2636,7 @@ function updateModeUI(){
   show('regenBtn',!on);                // Auto: normal Regenerate
   show('genBtn',on);                   // Manual: Generate (or Regenerate this fortnight)
   show('clearFnBtn',on);               // Manual: Clear this fortnight, generated or not
-  set('genLbl',committed?'Regenerate':'Generate');
+  set('genLbl',committed&&genNext(cycleStartISO(cycleOffset)).regen?'Regenerate':'Generate');
   // Clear stays live on EVERY cycle in manual mode. Disabling it on an empty
   // fortnight made it look like it wasn't there at all (and killed its tooltip,
   // so nothing explained why); clicking it on an empty one just says so.

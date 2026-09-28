@@ -328,6 +328,70 @@ check('Auto: the dropped night shows as short', edits.nightShortShown);
 check('Manual: the edit is not rebalanced', edits.manualNoRebalance);
 check('banner: a week over the split is flagged in red', edits.weekOverBanner);
 
+/* ---------------- 2c. Settings → Generate: generate part by part ---------------- */
+const parts = await page.evaluate(() => {
+  const ENTRY = new Set(['D6','D7','S8','S9','S10','N7','HOL','VAC','SL']);
+  const wk = (row, w) => row.slice(w*7, w*7+7).filter(x => ENTRY.has(x)).length;
+  const tick = (wd, we, ni) => { setGenPart('weekdays', wd); setGenPart('weekends', we); setGenPart('nights', ni); };
+  const lbl = () => document.getElementById('genLbl').textContent;
+  const bnr = () => document.getElementById('banner').textContent;
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {};
+  manualMode = true; cycleOffset = 0; seed = 321; render();
+  const out = {};
+  settTab('gen');
+  out.tabShown = !document.getElementById('settPanel-gen').hidden && !!document.getElementById('gpNights');
+
+  tick(true, false, false); generateFortnight();                       // weekdays only
+  let sh = sched.sh;
+  out.wdNoNights = sh.every(r => !r.includes('N7'));
+  out.wdNoWeekend = sh.every(r => [5,6,12,13].every(d => r[d] === 'OFF'));
+  out.wdHasDays = sh.some(r => r.slice(0,5).some(x => x !== 'OFF'));
+  out.bannerPartial = bnr().includes('Partly generated') && bnr().includes('Nights');
+  out.lblAfterWd = lbl();                                              // ticked part done -> Regenerate
+  const wdGrid = sh.map(r => r.join());
+
+  tick(false, false, true);
+  out.lblNights = lbl();                                               // nights not done -> Generate
+  generateFortnight();
+  sh = sched.sh;
+  out.nightsKeptWeekdays = sh.every((r, i) => wdGrid[i].split(',').every((x, d) => x === 'OFF' || r[d] === x));
+  out.nights2 = [...Array(14).keys()].every(d => sh.filter(r => r[d] === 'N7').length === 2);
+
+  tick(false, true, false); generateFortnight();                       // weekends
+  sh = sched.sh;
+  out.allOnSplit = sh.every((r, i) => wk(r, 0) === (groups[i]==='A'?4:3) && wk(r, 1) === (groups[i]==='A'?3:4));
+  out.planDropped = !genPlan[cycleStartISO(0)];
+  out.bannerFull = !bnr().includes('Partly generated');
+
+  undo();                                                              // back to 2 parts
+  out.undoRestores = partsDone(cycleStartISO(0)).length === 2 && sched.sh.every(r => [5,6,12,13].every(d => r[d] !== 'D7'));
+  clearCycle.__confirm = window.confirm; window.confirm = () => true; clearCycle(); window.confirm = clearCycle.__confirm;
+  out.clearWipes = !genDone[cycleStartISO(0)] && !genPlan[cycleStartISO(0)];
+
+  tick(false, false, false); const f0 = JSON.stringify(frozen); generateFortnight();
+  out.noneTicked = JSON.stringify(frozen) === f0;
+
+  tick(true, true, true); overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {};
+  manualMode = false; render(); closeSettings();
+  return out;
+});
+console.log('\n--- Settings → Generate (part by part) ---');
+check('Generate tab is in Settings', parts.tabShown);
+check('Weekdays only: no nights placed', parts.wdNoNights);
+check('Weekdays only: no weekend shifts placed', parts.wdNoWeekend);
+check('Weekdays only: weekday shifts placed', parts.wdHasDays);
+check('banner says partly generated + what is left', parts.bannerPartial);
+check('button reads Regenerate when ticked parts are done', parts.lblAfterWd === 'Regenerate', parts.lblAfterWd);
+check('button reads Generate when a new part is ticked', parts.lblNights === 'Generate', parts.lblNights);
+check('adding nights keeps the weekday grid', parts.nightsKeptWeekdays);
+check('adding nights: exactly 2 per night', parts.nights2);
+check('all three parts in: every RN on the 4/3 · 3/4 split', parts.allOnSplit);
+check('stored plan dropped once complete', parts.planDropped);
+check('banner back to normal checks once complete', parts.bannerFull);
+check('Undo restores the previous part state', parts.undoRestores);
+check('Clear wipes the part state', parts.clearWipes);
+check('nothing ticked: Generate changes nothing', parts.noneTicked);
+
 /* ---------------- 3. stable ids: requests follow the nurse ---------------- */
 const idTest = await page.evaluate(() => {
   const days = computeSchedule(0).days;
@@ -382,11 +446,14 @@ const reg2 = await page.evaluate(() => {
   fatigue.maxNights = 3;
   staffLabels = { AIDE: 'Probe Aids' };
   overrides = { [isoKey(days[2])]: { [rid(3)]: 'VAC' } };
+  genParts = { weekdays: true, weekends: false, nights: false };
+  genDone = { probe: ['weekdays'] }; genPlan = { probe: { [rid(0)]: Array(14).fill('D6') } };
   const before = customShifts.length;
   const saved = JSON.parse(JSON.stringify(cloudStateObj()));
   // wipe every one
   flags = {}; defHol = 14; defVac = 21; DAILY_MIN[0].D6 = 2;
   fatigue.maxNights = 8; staffLabels = {}; overrides = {};
+  genParts = { weekdays: true, weekends: true, nights: true }; genDone = {}; genPlan = {};
   applyStateObject(saved); render();
   out.roundTrip = {
     flags: !!(flags[isoKey(days[1])] && flags[isoKey(days[1])][rid(2)]),
@@ -395,7 +462,10 @@ const reg2 = await page.evaluate(() => {
     fatigue: fatigue.maxNights === 3,
     staffLabels: staffLabels.AIDE === 'Probe Aids',
     overrides: sched.sh[3][2] === 'VAC',
-    customShifts: customShifts.length === before
+    customShifts: customShifts.length === before,
+    genParts: genParts.weekends === false && genParts.weekdays === true,
+    genDone: !!(genDone.probe && genDone.probe[0] === 'weekdays'),
+    genPlan: !!(genPlan.probe && genPlan.probe[rid(0)][3] === 'D6')
   };
 
   // undo round-trip: snapshot -> mutate -> restore reverts every undo field
@@ -407,6 +477,7 @@ const reg2 = await page.evaluate(() => {
   out.undoReverted = Object.keys(flags).length === 0 && Object.keys(overrides).length === 0;
 
   // reset
+  genParts = { weekdays: true, weekends: true, nights: true }; genDone = {}; genPlan = {};
   flags = {}; overrides = {}; defHol = 14; defVac = 21; DAILY_MIN[0].D6 = 2;
   fatigue.maxNights = 8; staffLabels = {}; render();
   return out;
