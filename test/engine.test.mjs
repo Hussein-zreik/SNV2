@@ -291,5 +291,128 @@ test('absent night list falls back to the default group rotation', () => {
   for (let d = 0; d < 14; d++) assert.equal(cnt(sh, d, 'N7'), 2); // default: 2/night
 });
 
+/* ---------- rule priority: the 4/3 · 3/4 split is the golden rule ---------- */
+const DAY = d => Engine.isoKey(Engine.addDays(MONDAY, d));
+const inWeek = (row, w) => row.slice(w * 7, w * 7 + 7).filter(x => ENTRY.has(x)).length;
+const SPLIT = i => (i < 10 ? [4, 3] : [3, 4]);   // ctx(19): n0..n9 Group A, n10..n18 Group B
+const onWeekendTurn = (c, off, i) => { const t = Engine.turnFor(c, off); return t.wkndA.includes(i) || t.wkndB.includes(i); };
+
+test('night-turn nurse + a manual day duty: stays at 4/3, no 8th duty', () => {
+  // n0 is on the Group-A night turn (Mon/Tue/Sat/Sun | Wed/Thu/Fri); give them a Wed day duty
+  const { sh } = Engine.computeSchedule(ctx(19, { [DAY(2)]: { n0: 'D6' } }), 0);
+  assert.equal(sh[0][2], 'D6');
+  assert.equal(inWeek(sh[0], 0), 4, 'week 1 must stay at 4');
+  assert.equal(inWeek(sh[0], 1), 3, 'week 2 must stay at 3');
+  assert.notEqual(sh[0][1], 'N7', 'the Tue night before the Wed day duty is the one dropped');
+});
+test('a night lost to a manual entry is backfilled from the night list', () => {
+  const { sh } = Engine.computeSchedule(ctx(19, { [DAY(2)]: { n0: 'D6' } }), 0);
+  for (let d = 0; d < 14; d++) assert.equal(cnt(sh, d, 'N7'), 2, `night ${d}`);
+  // the backfill RN is from Group A, keeps their own split, and has no day duty the next morning
+  const filler = sh.findIndex((r, i) => i > 1 && r[1] === 'N7');
+  assert.ok(filler >= 0 && filler < 10, 'backfilled by a Group-A RN');
+  assert.equal(inWeek(sh[filler], 0), SPLIT(filler)[0]);
+  assert.ok(!CORE.includes(sh[filler][2]), 'no day duty the morning after the night');
+});
+test('nights already staffed by hand: the turn nurse gets day duties instead', () => {
+  // the manager puts n5 on nights for Mon/Tue/Sat/Sun of week 1 (n5's 4 duties)
+  const over = {}; for (const d of [0, 1, 5, 6]) over[DAY(d)] = { n5: 'N7' };
+  const { sh } = Engine.computeSchedule(ctx(19, over), 0);
+  for (let d = 0; d < 14; d++) assert.equal(cnt(sh, d, 'N7'), 2, `night ${d} still exactly 2`);
+  for (const i of [0, 1, 5]) {
+    assert.equal(inWeek(sh[i], 0), 4, `n${i} week 1`);
+    assert.equal(inWeek(sh[i], 1), 3, `n${i} week 2`);
+  }
+  // one of the turn nurses was handed back and works day duties in week 1
+  assert.ok([0, 1].some(i => sh[i].slice(0, 7).some(x => CORE.includes(x))), 'a turn nurse got day duties');
+});
+test('night-turn nurse with a day off on a night day is topped up to their count', () => {
+  const { sh } = Engine.computeSchedule(ctx(19, { [DAY(0)]: { n0: 'REQ' } }), 0);
+  assert.equal(sh[0][0], 'REQ');
+  assert.equal(inWeek(sh[0], 0), 4);
+  for (let d = 1; d < 14; d++) if (sh[0][d - 1] === 'N7') assert.ok(!CORE.includes(sh[0][d]), `no day after a night (day ${d})`);
+});
+test('Monday off in a 4-duty week: still 4 duties (4 in a row allowed)', () => {
+  const c0 = ctx(19);
+  const i = [12, 13, 14, 15, 16, 17, 18].find(x => !onWeekendTurn(c0, 0, x));  // Group B, week 2 = 4
+  for (let s = 0; s < 15; s++) {
+    const { sh } = Engine.computeSchedule(ctx(19, { [DAY(7)]: { ['n' + i]: 'REQ' } }, { seed: s * 7919 }), 0);
+    assert.equal(inWeek(sh[i], 1), 4, `seed ${s}: n${i} week 2`);
+  }
+});
+test('manual duties count: 2 entered in a 4-duty week -> only 2 added', () => {
+  const c0 = ctx(19);
+  const i = [2, 3, 4, 5, 6, 7, 8, 9].find(x => !onWeekendTurn(c0, 0, x));
+  const id = 'n' + i;
+  const { sh } = Engine.computeSchedule(ctx(19, { [DAY(0)]: { [id]: 'D6' }, [DAY(1)]: { [id]: 'D6' } }), 0);
+  assert.equal(sh[i][0], 'D6'); assert.equal(sh[i][1], 'D6');
+  assert.equal(inWeek(sh[i], 0), 4);
+});
+test('5 duties entered in one week: kept, nothing added, next week untouched', () => {
+  const id = 'n6', over = {};
+  for (const d of [0, 1, 2, 3, 4]) over[DAY(d)] = { [id]: 'D6' };
+  const { sh } = Engine.computeSchedule(ctx(19, over), 0);
+  assert.equal(inWeek(sh[6], 0), 5, 'entries are never removed');
+  assert.equal(inWeek(sh[6], 1), 3, 'week 2 keeps its own 3');
+});
+test('sweep: random requests never break the weekly split', () => {
+  const types = ['D6', 'S9', 'REQ', 'OFF', 'VAC'];
+  let checked = 0;
+  for (let s = 0; s < 60; s++) {
+    const rng = Engine.mkRng(s * 2654435761 + 7), over = {};
+    for (let k = 0; k < 4; k++) {
+      const d = Math.floor(rng() * 14), i = Math.floor(rng() * 19), t = types[Math.floor(rng() * types.length)];
+      (over[DAY(d)] ||= {})['n' + i] = t;
+    }
+    const c = ctx(19, over, { seed: s * 40503 });
+    const { sh } = Engine.computeSchedule(c, 0);
+    for (let i = 0; i < 19; i++) for (const w of [0, 1]) {
+      const n = inWeek(sh[i], w);
+      assert.ok(n <= SPLIT(i)[w], `seed ${s} n${i} week ${w + 1}: ${n} over the split`);
+      assert.equal(n, SPLIT(i)[w], `seed ${s} n${i} week ${w + 1}: ${n}, needs ${SPLIT(i)[w]}`);
+      checked++;
+    }
+  }
+  assert.ok(checked > 0);
+});
+
+/* ---------- rebalanceRow: auto-mode edit on a generated fortnight ---------- */
+test('rebalanceRow: an added duty removes an app-made one in the same week only', () => {
+  const c = ctx(19), sh = Engine.computeSchedule(c, 0).sh;
+  const i = [2, 3, 4, 5, 6, 7, 8, 9].find(x => sh[x].slice(0, 5).includes('OFF') && !sh[x].includes('N7'));
+  const d = sh[i].slice(0, 5).indexOf('OFF');
+  const before = sh.map(r => r.slice());
+  sh[i][d] = 'S9'; c.overrides = { [DAY(d)]: { ['n' + i]: 'S9' } };
+  Engine.rebalanceRow(c, 0, i, sh);
+  assert.equal(sh[i][d], 'S9', 'the entry stays');
+  assert.equal(inWeek(sh[i], 0), 4); assert.equal(inWeek(sh[i], 1), 3);
+  assert.deepEqual(sh[i].slice(7), before[i].slice(7), 'week 2 untouched');
+  for (let j = 0; j < 19; j++) if (j !== i) assert.deepEqual(sh[j], before[j], `n${j} untouched`);
+});
+test('rebalanceRow: a removed duty is added back', () => {
+  const c = ctx(19), sh = Engine.computeSchedule(c, 0).sh;
+  const i = [12, 13, 14, 15, 16, 17, 18].find(x => !sh[x].includes('N7'));
+  const d = [7, 8, 9, 10, 11].find(x => CORE.includes(sh[i][x]));
+  sh[i][d] = 'OFF'; c.overrides = { [DAY(d)]: { ['n' + i]: 'OFF' } };
+  Engine.rebalanceRow(c, 0, i, sh);
+  assert.equal(sh[i][d], 'OFF');
+  assert.equal(inWeek(sh[i], 1), 4);
+});
+test('rebalanceRow: night nurse + day duty drops a night, no backfill (short)', () => {
+  const c = ctx(19), sh = Engine.computeSchedule(c, 0).sh;
+  sh[0][2] = 'D6'; c.overrides = { [DAY(2)]: { n0: 'D6' } };   // Wed day duty for night-turn n0
+  Engine.rebalanceRow(c, 0, 0, sh);
+  assert.equal(inWeek(sh[0], 0), 4);
+  assert.notEqual(sh[0][1], 'N7', 'the Tue night before the day duty goes');
+  assert.equal(cnt(sh, 1, 'N7'), 1, 'that night is left short for the manager');
+});
+test('rebalanceRow: entries are never removed, even when over', () => {
+  const c = ctx(19), sh = Engine.computeSchedule(c, 0).sh;
+  const over = {}; for (const d of [0, 1, 2, 3, 4]) { sh[6][d] = 'D6'; over[DAY(d)] = { n6: 'D6' }; }
+  c.overrides = over;
+  Engine.rebalanceRow(c, 0, 6, sh);
+  for (const d of [0, 1, 2, 3, 4]) assert.equal(sh[6][d], 'D6');
+});
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail === 0 ? 0 : 1);

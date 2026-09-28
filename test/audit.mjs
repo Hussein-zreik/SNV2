@@ -194,21 +194,25 @@ const scen = await page.evaluate((NS) => {
   const cnt = (sh,d,t) => { let c=0; for (let i=0;i<sh.length;i++) if (sh[i][d]===t) c++; return c; };
   const days = computeSchedule(0).days;
 
-  // A run over 3 days only counts against the scheduler when no requested
-  // working day sits inside it — otherwise the manager caused it deliberately
-  // (and the health banner reports it).
+  // Rule priority: the 4/3 · 3/4 split outranks <=3 in a row. So a run over 3
+  // days only counts against the scheduler for a nurse with NO entries this
+  // fortnight — any entry (a duty, a day off, leave) can leave 4 in a row as the
+  // only way to reach the count, and the health banner reports it.
   function violations(sh, reqs) {
     const v = [];
     for (const [rn, d, ty] of reqs) if (sh[rn][d] !== ty) v.push('request not honored');
-    for (let i = 0; i < sh.length; i++) {
-      if (maxRun(sh[i]) <= 3) continue;
-      const asked = new Set(reqs.filter(r => r[0] === i && WORK.has(r[2])).map(r => r[1]));
-      let run = [];
-      for (let d = 0; d <= 14; d++) {
-        if (d < 14 && WORK.has(sh[i][d])) run.push(d);
-        else { if (run.length > 3 && !run.some(x => asked.has(x))) v.push('run over 3 days'); run = []; }
-      }
+    for (let i = 0; i < sh.length; i++)
+      if (maxRun(sh[i]) > 3 && !reqs.some(r => r[0] === i)) v.push('run over 3 days');
+    // the golden rule: every nurse works exactly their split each week, their
+    // entries included — unless the manager entered more than the split by hand
+    for (let i = 0; i < sh.length; i++) for (const w of [0, 1]) {
+      const lo = w*7, hi = lo+7, split = (groups[i] === 'A' ? [4,3] : [3,4])[w];
+      const n = sh[i].slice(lo, hi).filter(x => ENTRY.has(x)).length;
+      const entered = reqs.filter(r => r[0]===i && ENTRY.has(r[2]) && r[1]>=lo && r[1]<hi).length;
+      if (n !== Math.max(split, entered)) v.push('off the 4/3 split');
     }
+    // a night lost to an entry is backfilled from the night list
+    for (let d = 0; d < 14; d++) if (cnt(sh, d, 'N7') < 2) v.push('night short');
     // NOTE: a request may pull a day below minimum staffing. That is now
     // acceptable by design — the turn quota is absolute, so rather than hand
     // someone an extra duty the day is left short for a manual fix. So we do
@@ -261,6 +265,9 @@ const scen = await page.evaluate((NS) => {
   scenario('Saturday S10 requested',       () => [[7,5,'S10']]);
   scenario('three nurses off same day',    () => [[2,3,'OFF'],[3,3,'OFF'],[4,3,'OFF']]);
   scenario('mixed duty/off/vacation',      () => [[2,0,'D6'],[3,1,'OFF'],[8,2,'VAC'],[9,5,'D7']]);
+  scenario('day duty for night-turn nurses', () => { const t = turnFor(0);
+    return [[t.nightA[0],2,'D6'],[t.nightB[0],0,'S9']]; });
+  scenario('day off on a night-turn night',  () => { const t = turnFor(0); return [[t.nightA[1],5,'REQ']]; });
   scenario('eight mixed requests',         () => { const T=['D6','D7','S8','S9','S10','OFF','VAC','REQ'],o=[];
     for (let q=0;q<8;q++) o.push([(q*2+1)%19,(q*3)%14,T[q%T.length]]); return o; });
   scenario('fifteen mixed requests',       () => { const T=['D6','D7','S8','S9','OFF','VAC','REQ'],o=[];
@@ -271,6 +278,55 @@ const scen = await page.evaluate((NS) => {
 console.log(`\n--- requests respect the rules (${SCEN_SEEDS} seeds per scenario) ---`);
 for (const [name, r] of Object.entries(scen))
   check(name, r.total === 0, JSON.stringify(r.seen));
+
+/* ---------------- 2b. editing a GENERATED fortnight ---------------- */
+// Auto mode rebalances ONLY the edited nurse back to their split; Manual mode
+// leaves the edit exactly as typed (the manager fixes the count by hand).
+const edits = await page.evaluate(() => {
+  const ENTRY = new Set(['D6','D7','S8','S9','S10','N7','HOL','VAC','SL']);
+  const wk = (row, w) => row.slice(w*7, w*7+7).filter(x => ENTRY.has(x)).length;
+  const gen = () => { overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {};
+    manualMode = true; cycleOffset = 0; seed = 99; render(); generateFortnight(); };
+  // a day nurse with a free weekday in week 1, and a night-turn nurse
+  const pick = () => { for (let i = 0; i < N; i++) { const r = sched.sh[i];
+    if (r.includes('N7')) continue; const d = r.slice(0,5).indexOf('OFF'); if (d >= 0) return [i, d]; } };
+  const edit = (i, d, s) => { openCellM(i, d); mSel = s; saveCell(); };
+  const out = {};
+
+  gen(); manualMode = false; render();                       // Auto mode, generated fortnight
+  let [i, d] = pick(); const others = sched.sh.map(r => r.join()).filter((_, j) => j !== i);
+  edit(i, d, 'S9');
+  out.autoKept = sched.sh[i][d] === 'S9';
+  out.autoSplit = wk(sched.sh[i], 0) === (groups[i]==='A'?4:3) && wk(sched.sh[i], 1) === (groups[i]==='A'?3:4);
+  out.autoOthers = JSON.stringify(sched.sh.map(r => r.join()).filter((_, j) => j !== i)) === JSON.stringify(others);
+  const t = turnFor(0), n = t.nightA[0];
+  edit(n, 2, 'D6');                                          // day duty for a night-turn nurse
+  out.autoNight = wk(sched.sh[n], 0) === 4 && sched.sh[n][1] !== 'N7';
+  out.nightShortShown = document.getElementById('banner').textContent.includes('not covered by 2 RNs');
+
+  gen();                                                     // Manual mode, generated fortnight
+  [i, d] = pick(); const before = wk(sched.sh[i], 0);
+  edit(i, d, 'S9');
+  out.manualNoRebalance = wk(sched.sh[i], 0) === before + 1;
+
+  // five duties typed into one week -> red per-week warning in the banner
+  overrides = {}; frozen = {}; committedCycles = {}; manualMode = false; render();
+  const k = x => isoKey(sched.days[x]);
+  for (const x of [0,1,2,3,4]) overrides[k(x)] = { ...(overrides[k(x)]||{}), [rid(6)]: 'D6' };
+  render();
+  const b = document.getElementById('banner');
+  out.weekOverBanner = b.classList.contains('bad') && b.textContent.includes(`${names[6]}: 5 duties in week 1 (max ${groups[6]==='A'?4:3})`);
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; manualMode = false; render();
+  return out;
+});
+console.log('\n--- editing a generated fortnight ---');
+check('Auto: the edit is kept', edits.autoKept);
+check('Auto: the edited nurse is rebalanced to their split', edits.autoSplit);
+check('Auto: no other nurse changes', edits.autoOthers);
+check('Auto: a night-turn nurse drops a night, stays at 4', edits.autoNight);
+check('Auto: the dropped night shows as short', edits.nightShortShown);
+check('Manual: the edit is not rebalanced', edits.manualNoRebalance);
+check('banner: a week over the split is flagged in red', edits.weekOverBanner);
 
 /* ---------------- 3. stable ids: requests follow the nurse ---------------- */
 const idTest = await page.evaluate(() => {

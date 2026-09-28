@@ -1518,24 +1518,28 @@ function renderTable(){
   // overwrite an edit made elsewhere. Every mutating action saves explicitly.
 }
 
-// Which nurses are off their exact-7 count, and which nights aren't covered by
-// exactly two RNs — named, with a flag for anyone on the night turn. Nights are
-// fully manual and never auto-adjusted, so a request or manual edit that lands
-// on a night-turn nurse is the usual cause of an 8-shift (day request on top of
-// their 7 nights) or 6-shift / short-night (off on a night day). This detects
-// it so it can be surfaced instead of silently breaking the schedule.
+// Which nurses are off their exact-7 count or over a week's split (4/3 · 3/4),
+// and which nights aren't covered by exactly two RNs — named, with a flag for
+// anyone on the night turn. The generator keeps every RN on their split, so what
+// this finds is almost always a hand edit: entries over the split, a Manual-mode
+// edit on a generated fortnight, or a night left short when nobody could backfill.
 function conflictReport(off,sh){
   const T=turnFor(off);
   const nightSet=new Set([...T.nightA,...T.nightB]);
-  const over=[],under=[],nightsShort=[],nightsOver=[];
+  const over=[],under=[],nightsShort=[],nightsOver=[],weekOver=[];
   for(let i=0;i<N;i++){
+    // the split is strict per week (A 4 then 3, B 3 then 4): a week over it is
+    // always an entry the manager made, since the generator never exceeds it
+    const split=groups[i]==='A'?[4,3]:[3,4];
+    for(const w of [0,1]){const n=sh[i].slice(w*7,w*7+7).filter(s=>ENTRY_TYPES.has(s)).length;
+      if(n>split[w])weekOver.push({i,w,n,max:split[w]});}
     const tot=sh[i].filter(s=>ENTRY_TYPES.has(s)).length;
     if(tot===7)continue;
     (tot>7?over:under).push({i,tot,onNight:nightSet.has(i)});
   }
   for(let d=0;d<14;d++){let c=0;for(let i=0;i<N;i++)if(sh[i][d]==='N7')c++;
     if(c<2)nightsShort.push({d,c});else if(c>2)nightsOver.push({d,c});}
-  return {over,under,nightsShort,nightsOver,nightSet};
+  return {over,under,nightsShort,nightsOver,weekOver,nightSet};
 }
 // advisory fatigue checks (display-only). Returns nurses flagged by each rule:
 //  turn  — worked a night (N7) then a day/eve shift the very next day
@@ -1588,7 +1592,9 @@ function renderBanner(){
   const notSeven=cr.over.length+cr.under.length;
   const nightTurnClash=cr.over.some(o=>o.onNight)||cr.under.some(o=>o.onNight);
   // night-turn nurses whose nights are cancelled by a locked entry
-  const blockers=nightBlockers(cycleOffset).filter(x=>x.blocked.length);
+  // (only where the night really is short — the generator backfills most of them)
+  const shortNight=new Set(cr.nightsShort.map(x=>x.d));
+  const blockers=nightBlockers(cycleOffset).filter(x=>x.blocked.some(d=>shortNight.has(d)));
   const blockedMsg=blockers.length
     ? `${blockers.map(x=>`<b>${nm(x.i)}</b> (${x.blocked.length})`).join(', ')} — on the night turn but ${blockers.length>1?'their':'this'} night days carry other entries, so those nights are <b>not staffed</b>. Settings → Night cycle → <b>Free the night turn</b>, or clear them in Requests.`
     : '';
@@ -1605,12 +1611,15 @@ function renderBanner(){
   if(ft.rest.length)fatigueParts.push(`<b>${ft.rest.length}</b> with under ${fatigue.minRest} day${fatigue.minRest>1?'s':''} off between stretches: ${ft.rest.map(nm).join(', ')}`);
   const anyFatigue=fatigueParts.length>0;
 
-  if(!short.length&&!notSeven&&!longRuns&&!nightGaps.length&&!anyFatigue&&!blockedMsg){
+  // 2b) a week over its split (4/3 · 3/4) — the manager entered too many
+  const weekOverMsg=cr.weekOver.map(o=>`<b>${nm(o.i)}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`);
+  if(!short.length&&!notSeven&&!longRuns&&!nightGaps.length&&!anyFatigue&&!blockedMsg&&!weekOverMsg.length){
     el.className='banner ok';
     el.innerHTML='<span class="bic">✓</span><span>All staffing &amp; fatigue rules satisfied.</span>';
     return;
   }
   const parts=[];
+  if(weekOverMsg.length)parts.push(weekOverMsg.join(', '));
   if(blockedMsg)parts.push(`<b>night turn cancelled</b> for ${blockedMsg}`);
   if(nightGaps.length)parts.push(`<b>${nightGaps.length}</b> night${nightGaps.length>1?'s':''} not covered by 2 RNs (${nightGaps.join(', ')})`);
   if(short.length)parts.push(`<b>${short.length}</b> day${short.length>1?'s':''} below minimum staffing (${short.join(', ')})`);
@@ -1619,10 +1628,11 @@ function renderBanner(){
   if(longRuns)parts.push(`<b>${longRuns}</b> nurse${longRuns>1?'s':''} working 4+ days in a row`);
   parts.push(...fatigueParts);   // fatigue warnings come last (advisory)
   // hard staffing problems are red (bad); fatigue-only / long-run is amber (warn)
-  const level=(short.length||notSeven||nightGaps.length||blockedMsg)?'bad':'warn';
+  const level=(short.length||notSeven||nightGaps.length||blockedMsg||weekOverMsg.length)?'bad':'warn';
   let hint='';
-  if(blockedMsg)hint='<div class="bhint">A locked entry sits on a night-turn nurse\'s night day, so that night is not staffed. Use <b>Settings → Night cycle → Free the night turn</b> to clear the day-shift entries that are cancelling it (holidays, vacations and requested days off are kept).</div>';
-  else if(nightTurnClash)hint='<div class="bhint">A named nurse above is on the <b>night turn</b> this fortnight and has a request or manual entry that collides with their 7 nights — a day shift pushes them over 7, and an off (or other) on a night day leaves that night short. Remove it in <b>Requests</b>, or fix the night cells by hand.</div>';
+  if(weekOverMsg.length)hint='<div class="bhint">More duties were entered in that week than the 4/3 · 3/4 split allows. Entries are never removed automatically — clear one in <b>Requests</b> or on the grid.</div>';
+  else if(blockedMsg)hint='<div class="bhint">A locked entry sits on a night-turn nurse\'s night day, so that night is not staffed. Use <b>Settings → Night cycle → Free the night turn</b> to clear the day-shift entries that are cancelling it (holidays, vacations and requested days off are kept).</div>';
+  else if(nightTurnClash)hint='<div class="bhint">A named nurse above is on the <b>night turn</b> this fortnight and has a request or manual entry that collides with their nights — an entry on a night day cancels that night, and one that could not be absorbed leaves them off 7. Remove it in <b>Requests</b>, or fix the night cells by hand.</div>';
   else if(nightGaps.length)hint='<div class="bhint">Nights are manual: assign a replacement yourself by clicking the night cell.</div>';
   else if(short.length)hint='<div class="bhint">Tip: usually caused by requests that can\'t all be met (e.g. too many off the same day), a manual edit, or an unbalanced A/B group split.</div>';
   else if(anyFatigue&&!longRuns)hint='<div class="bhint">These are advisory rest/fatigue warnings — fix by hand, or adjust the limits in <b>Settings → Fatigue rules</b>.</div>';
@@ -2634,9 +2644,18 @@ function saveCell(){
     if(shiftChg){
       const k=isoKey(sched.days[mDay]);
       const gkCur=cycleStartISO(cycleOffset);
-      if(frozen[gkCur]){
-        // frozen (generated) fortnight: edit ONLY this cell in the fixed grid, so
-        // nothing cascades. Clear any request on this cell so the edit is what shows.
+      if(frozen[gkCur]&&!manualMode){
+        // Auto mode, generated fortnight: the edit becomes an entry (a lock) and
+        // ONLY this nurse's row is rebalanced back to their 4/3 · 3/4 split, so
+        // nothing cascades to anyone else. A night that has to go is not backfilled.
+        if(!overrides[k])overrides[k]={}; overrides[k][rid(mRn)]=mSel;
+        const grid=sched.sh.map(r=>r.slice());grid[mRn][mDay]=mSel;
+        Engine.rebalanceRow(schedCtx(),cycleOffset,mRn,grid);
+        frozen[gkCur][rid(mRn)]=grid[mRn];
+      }else if(frozen[gkCur]){
+        // Manual mode, generated fortnight: edit ONLY this cell in the fixed grid —
+        // no rebalancing; the manager fixes the count by hand. Clear any request
+        // on this cell so the edit is what shows.
         if(!frozen[gkCur][rid(mRn)])frozen[gkCur][rid(mRn)]=sched.sh[mRn].slice();
         frozen[gkCur][rid(mRn)][mDay]=mSel;
         if(overrides[k]&&overrides[k][rid(mRn)]!==undefined){delete overrides[k][rid(mRn)];if(!Object.keys(overrides[k]).length)delete overrides[k];}

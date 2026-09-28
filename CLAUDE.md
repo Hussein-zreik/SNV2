@@ -14,7 +14,7 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 ```bash
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
-npm run test:unit      # 33 engine unit tests in plain Node, ~0.5s
+npm run test:unit      # 43 engine unit tests in plain Node, ~0.5s
 npm test               # full rule audit driving the app in headless Chromium, ~30s
 ```
 
@@ -124,29 +124,47 @@ fortnight". Leave is an entry but not work.
 
 ## Scheduling rules, and the conflicts between them
 
-The hard rules, in the order the engine enforces them:
+The rules, **in priority order** — set by the ward's nurse manager. A lower rule always
+gives way to a higher one:
 
-1. Every night is staffed by the N7 minimum (default 2) — **never leave a night short.**
-2. The night turn is 2 RNs from Group A on `NA_DAYS` and 2 from Group B on `NB_DAYS`,
-   7 nights each. Turns *tile* the night list and reroll; they do not drift.
-3. Each RN works exactly 7 duties per fortnight — Group A 4 then 3, Group B 3 then 4.
-4. No more than 3 consecutive working days, enforced across the cycle seam too.
-5. Weekday staffing minimums per shift type.
+1. **The 4/3 · 3/4 split is the golden rule.** Every RN, night-turn nurses included,
+   works exactly their weekly count — Group A 4 then 3, Group B 3 then 4 — strictly per
+   week (never 5 + 2). If a nurse is under their count, they don't get paid. The manager's entries count toward it (duties, and
+   Hol/Vac/SL, which replace a duty), so only the difference is added.
+2. **Weekday staffing minimums** per shift type.
+3. **Nights at the N7 minimum** (default 2). The night turn is `size` RNs from Group A on
+   `NA_DAYS` and `size` from Group B on `NB_DAYS`; turns *tile* the night list and reroll.
+   A turn nurse gets nights **only up to their weekly count**, so a manual day duty costs
+   them a night (the one the evening before it goes first — no night→day turnaround).
+   The lost night is then handled in this order:
+   - if the manager already staffed that night by hand (another RN's `N7` entry), the
+     turn nurse is simply handed day duties instead;
+   - otherwise it is **backfilled** from the same group's night list: an RN off the
+     night and weekend turns, free that night, with room in that week's split, and no
+     locked day duty the next morning;
+   - if nobody fits, the night is left short and the banner says so.
+4. **Everything else, only where it costs no duty** — ≤3 consecutive days (also across
+   the cycle seam), no weekend surplus. **4 in a row is allowed** when it is the only way
+   to reach the count (e.g. a Monday or Friday off in a 4-duty week leaves Tue–Fri); the
+   banner reports it. Before calling a 4-day run a defect, check that nurse's entries —
+   every remaining one in the request sweeps is forced by them.
 
-**Rules 3 and 4 genuinely conflict, and the result looks like a bug when it is not.**
-Weekends are a separate fixed turn, so a nurse has only five weekday slots. A requested day
-off on a **Tuesday, Wednesday or Thursday** still allows 4 duties; one on a **Monday or
-Friday** leaves the four remaining weekdays contiguous, which would be 4 in a row, so that
-nurse can only reach 3. Before treating an off-quota nurse as a defect, check whether their
-locks make the quota arithmetically impossible.
+Never a day duty the morning after a night, in any pass.
 
-Likewise, a day duty requested for a nurse who is on the night turn puts them over 7. That
-is reported in the banner rather than silently fixed, because the only alternative is
-dropping one of their nights — which rule 1 forbids.
+**Entries are never moved or removed.** A week the manager over-fills by hand (e.g. 5
+duties in a 4-duty week) is kept as entered, nothing more is added to it, and the banner
+shows a red `RN: 5 duties in week 1 (max 4)`.
 
-`nightBlockers()` exists for a related trap: a locked entry sitting on a night-turn nurse's
-night day silently cancels that night. Genuine absences (Hol/Vac/SL/Req off) are reported
-separately from entries that should be cleared.
+**Edits on a generated (frozen) fortnight** differ by mode:
+- **Auto mode:** the edit becomes an entry and `Engine.rebalanceRow()` brings **only that
+  nurse's row** back to the split (removing or adding app-made duties in the same week).
+  A night it drops is **not** backfilled — it shows as short for the manager.
+- **Manual mode:** the cell is changed exactly as typed, with no rebalancing.
+
+`nightBlockers()` finds entries sitting on a night-turn nurse's night days. The banner
+only raises them when the night actually ended up short (most are backfilled).
+Genuine absences (Hol/Vac/SL/Req off) are reported separately from entries that should
+be cleared.
 
 ## Verifying a scheduler change
 
