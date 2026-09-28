@@ -1,0 +1,29 @@
+rules_version = '2';
+
+// Firestore security rules for the RN Rotating Schedule.
+//
+// Paste these into: Firebase console -> Firestore Database -> Rules -> Publish.
+// See SECURITY.md for the two-step setup (Anonymous sign-in must be enabled
+// FIRST, or the app will lose cloud access).
+//
+// What this does:
+//   - Only signed-in clients can read or write. The app signs in anonymously on
+//     load, so real users are unaffected; anonymous scripts and casual snooping
+//     are blocked.
+//   - Access is limited to the schedules collection. Nothing else is reachable.
+//   - Documents are keyed by your unit code, so the code itself must be treated
+//     as a secret (see SECURITY.md for the stronger per-user option).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /schedules/{unitCode} {
+      allow read, write: if request.auth != null;
+    }
+
+    // everything else is denied
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

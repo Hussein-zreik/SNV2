@@ -1,0 +1,7 @@
+node_modules/
+package-lock.json
+*.png
+*.pdf
+*.xlsx
+# throwaway diagnostic scripts (test/audit.mjs is the committed suite)
+_*.mjs
