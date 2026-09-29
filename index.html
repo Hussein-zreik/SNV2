@@ -372,6 +372,7 @@ tbody td.sh-cell.is-today .sc.s-OFF{background:transparent}
 .req-row .rr-rn{font-weight:600;color:var(--text);min-width:100px}
 .req-row .rr-tag{font-weight:500;font-size:var(--fs-xs);font-family:var(--font-mono);color:var(--muted-3);
   border:1px solid var(--border-2);border-radius:var(--r-sm);padding:0 5px;margin-left:5px;vertical-align:middle}
+.req-row .rr-why{flex:1;min-width:0;color:var(--muted-2);font-size:var(--fs-xs);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .req-row .rr-date{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--muted-2);font-size:var(--fs-xs)}
 .req-row .rr-badge{margin-left:auto;padding:3px 8px;border-radius:var(--r-sm);font-size:var(--fs-xs);font-weight:600;font-family:var(--font-mono)}
 .req-row .rr-del{cursor:pointer;color:var(--neg);font-size:var(--fs-md);line-height:1;padding:0 4px;border:none;background:none}
@@ -813,6 +814,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       </div>
       <div class="req-days-lbl">Pick the day(s) for this request:</div>
       <div class="req-days" id="reqDays"></div>
+      <label class="req-lbl" style="margin-top:10px;display:block">Reason <span style="font-weight:400;color:var(--muted-3)">(optional — saved as that day's comment, and shown in the request report)</span>
+        <textarea class="ninput" id="reqReason" rows="2" maxlength="300" placeholder="e.g. child's school event · medical appointment · exam" style="resize:vertical;line-height:var(--lh-normal);margin:4px 0 0"></textarea>
+      </label>
       <div class="mactions" style="margin-top:10px">
         <button class="btn accent" onclick="reqAdd()">Add request</button>
         <span id="reqAddMsg" style="font-size:11px;color:var(--muted-2);align-self:center"></span>
@@ -823,7 +827,12 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="req-note">Requests are locked: the schedule automatically rebuilds around them and keeps every staffing rule it can. A request never changes another. Anything the rules can't satisfy (e.g. too many off the same day) is flagged in the banner.</div>
     <div class="mactions" style="margin-top:1rem;justify-content:space-between">
       <button class="btn danger" onclick="reqClearAll()" title="Delete every logged request">Clear all</button>
-      <button class="btn accent" onclick="closeRequests()">Close</button>
+      <span style="display:flex;gap:var(--sp-2)">
+        <button class="btn" onclick="exportRequestReport()" title="Download an Excel sheet of this fortnight's time-off requests (Req off, Day off, Holiday, Vacation, Sick leave) with each RN's reason">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Request report
+        </button>
+        <button class="btn accent" onclick="closeRequests()">Close</button>
+      </span>
     </div>
   </div>
 </div>
@@ -2443,6 +2452,7 @@ function renderRequests(){
       const lbl=isNaN(dt)?it.k:`${DAYS[(dt.getDay()+6)%7]} ${fmt(dt)} ${dt.getFullYear()}`;
       return `<div class="req-row"><span class="rr-rn">${escapeHtml(it.name)}${it.staff?' <span class="rr-tag">staff</span>':''}</span>`+
         `<span class="rr-date">${lbl}</span>`+
+        (()=>{const w=(notes[it.k]&&notes[it.k][it.id])||'';return w?`<span class="rr-why" title="${escapeHtml(w)}">${escapeHtml(w)}</span>`:'';})()+
         `<span class="rr-badge b-${it.t}">${it.t==='REQ'?'Req off':it.t}</span>`+
         `<button class="rr-del" title="Delete this request" onclick="reqDelete('${it.k}','${it.id}')">✕</button></div>`;
     }).join('');
@@ -2456,11 +2466,16 @@ function reqAdd(){
   const days=reqDates(),before=snapshot();
   if(cycleLocked(reqOffset)){msg.textContent='🔒 This fortnight is locked — unlock it to add requests.';return;}
   let n=0;
+  const rb=document.getElementById('reqReason'),reason=rb?String(rb.value||'').trim():'';
   for(const d of reqSelDays){
     if(who.staff){setStaffShift(who.id,days[d],type);}
     else{const k=isoKey(days[d]);if(!overrides[k])overrides[k]={};overrides[k][rid(who.rn)]=type;}
+    // the reason becomes that day's comment (the same one the grid shows); an
+    // empty box leaves any existing comment alone
+    if(reason)setNote(who.staff?who.id:rid(who.rn),days[d],reason);
     n++;
   }
+  if(rb)rb.value='';
   pushHistory(`Request: ${who.name} · ${type==='REQ'?'Req off':type} × ${n} day${n>1?'s':''}`,before);
   reqSelDays=new Set();
   render();saveState();renderRequests();
@@ -3158,6 +3173,76 @@ async function exportExcelView(){
 }
 // conditional-formatting fills use bgColor (ExcelJS quirk)
 function solidCF(argb){return {type:'pattern',pattern:'solid',bgColor:{argb}};}
+/* ---------- request report: why each RN asked for time off ----------
+   One row per requested day in the fortnight shown in the Requests window —
+   RN · Group · Date · Day · Type · Reason — where Reason is that day's comment
+   (typed in the Reason box, or on the grid). Time off only: Req off, Day off,
+   Holiday, Vacation, Sick leave. RNs in display order, then by date. A locked
+   fortnight reads its record (names, order and comments as locked). */
+const REQ_REPORT_TYPES={REQ:'Req off',OFF:'Day off',HOL:'Holiday',VAC:'Vacation',SL:'Sick leave'};
+function requestReportRows(off){
+  const at=cycleOffset;cycleOffset=off;   // withLockedView reads the fortnight on cycleOffset
+  try{
+    return withLockedView(()=>{
+      const keys=cycleDayKeys(off),rows=[];
+      normalizeOrder();
+      for(const i of order)for(let d=0;d<14;d++){
+        const k=keys[d],t=overrides[k]&&overrides[k][ids[i]];
+        if(!t||!REQ_REPORT_TYPES[t])continue;
+        const dt=new Date(k+'T00:00:00');
+        rows.push({name:names[i],group:groups[i],date:dt,day:DAYS[d%7],type:t,
+          label:REQ_REPORT_TYPES[t],reason:(notes[k]&&notes[k][ids[i]])||''});
+      }
+      return rows;
+    });
+  }finally{cycleOffset=at;}
+}
+async function exportRequestReport(){
+  const off=reqOffset,keys=cycleDayKeys(off),rows=requestReportRows(off);
+  const from=new Date(keys[0]+'T00:00:00'),to=new Date(keys[13]+'T00:00:00');
+  const span=`${fmt(from)} – ${fmt(to)} ${to.getFullYear()}`,file=`RN_requests_${keys[0]}_to_${keys[13]}`;
+  if(!rows.length){toast('No time-off requests in this fortnight');return;}
+  const dstr=d=>`${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+  if(!window.ExcelJS){   // offline: plain CSV with the same columns
+    const esc=v=>{v=String(v==null?'':v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
+    const csv=[['RN','Group','Date','Day','Type','Reason'],...rows.map(r=>[r.name,r.group,dstr(r.date),r.day,r.label,r.reason])]
+      .map(r=>r.map(esc).join(',')).join('\n');
+    downloadBlob(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'}),file+'.csv');
+    toast('Spreadsheet library offline — request report exported as CSV');return;
+  }
+  try{
+    const P=XL_PAL.light,wb=new ExcelJS.Workbook();
+    wb.creator='RN Rotating Schedule';wb.created=new Date();
+    const ws=wb.addWorksheet('Requests',{views:[{state:'frozen',ySplit:3}]});
+    const thin={style:'thin',color:{argb:P.border}},box={top:thin,left:thin,bottom:thin,right:thin};
+    const solid=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
+    ws.columns=[{width:22},{width:8},{width:12},{width:7},{width:13},{width:60}];
+    ws.mergeCells(1,1,1,6);
+    Object.assign(ws.getCell(1,1),{value:`Time-off requests · ${span}`,font:{bold:true,size:14,color:{argb:P.titleFg}}});
+    ws.mergeCells(2,1,2,6);
+    Object.assign(ws.getCell(2,1),{value:`${rows.length} request${rows.length>1?'s':''} · ${new Set(rows.map(r=>r.name)).size} RN${new Set(rows.map(r=>r.name)).size>1?'s':''} · exported ${dstr(new Date())}`,font:{size:9,color:{argb:P.headerFg}}});
+    const hr=ws.getRow(3);
+    ['RN','Group','Date','Day','Type','Reason'].forEach((h,c)=>{const x=hr.getCell(c+1);
+      x.value=h;x.font={bold:true,color:{argb:P.headerFg}};x.fill=solid(P.header);x.border=box;x.alignment={vertical:'middle'};});
+    ws.autoFilter={from:{row:3,column:1},to:{row:3,column:6}};
+    rows.forEach((r,n)=>{
+      const row=ws.getRow(4+n);
+      // Excel dates are UTC: write the calendar day itself, or a timezone ahead of
+      // UTC (e.g. Beirut) shows every date one day early
+      const xd=new Date(Date.UTC(r.date.getFullYear(),r.date.getMonth(),r.date.getDate()));
+      row.values=[r.name,r.group,xd,r.day,r.label,r.reason||'—'];
+      row.getCell(3).numFmt='dd/mm/yyyy';
+      const c=P.S[r.type];
+      if(c){row.getCell(5).fill=solid(c[0]);row.getCell(5).font={bold:true,color:{argb:c[1]}};}
+      if(!r.reason)row.getCell(6).font={italic:true,color:{argb:P.offFg}};
+      row.getCell(6).alignment={wrapText:true,vertical:'top'};
+      for(let c2=1;c2<=6;c2++)row.getCell(c2).border=box;
+    });
+    const buf=await wb.xlsx.writeBuffer();
+    downloadBlob(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),file+'.xlsx');
+    toast(`Request report downloaded (${rows.length} request${rows.length>1?'s':''})`);
+  }catch(err){console.error('Request report failed',err);toast('Could not build the Excel file');}
+}
 function exportCSV(){return withLockedView(exportCSVView);}
 function exportCSVView(){
   const {rows}=exportRows();const tr=trackerRows();

@@ -194,6 +194,14 @@ the highest-priority layer — above `frozen` and requests:
   and comments), so nothing on screen changes. RNs removed while it was locked drop
   out at that point.
 
+**Request report (Requests window → Request report).** `requestReportRows(off)` lists the
+fortnight's time-off entries (`REQ_REPORT_TYPES`: Req off, Day off, Hol, Vac, SL — not
+requested duties), one row per day, RNs in display order, with the reason = that day's
+comment (`notes`). The Requests form's **Reason** box writes that same comment. It runs
+inside `withLockedView`, so a locked fortnight reports its record. The `.xlsx` writes
+dates as `Date.UTC(y,m,d)` — a local-midnight Date shows one day early in Excel for any
+timezone ahead of UTC (verified with `timezoneId: 'Asia/Beirut'`).
+
 `nightBlockers()` finds entries sitting on a night-turn nurse's night days. The banner
 only raises them when the night actually ended up short (most are backfilled).
 Genuine absences (Hol/Vac/SL/Req off) are reported separately from entries that should

@@ -455,6 +455,35 @@ check('unlocking keeps comments', lock.unlockNote);
 check('cells are editable again after unlocking', lock.cellOpensAfterUnlock);
 check('Undo re-locks after an unlock', lock.undoRelocks);
 
+/* ---------------- 2e. request report (Requests window) ---------------- */
+const rreport = await page.evaluate(() => {
+  overrides = {}; notes = {}; lockedCycles = {}; frozen = {}; committedCycles = {}; manualMode = false; cycleOffset = 0; render();
+  openRequests();
+  const pick = (rn, type, days, why) => { document.getElementById('reqRn').value = String(rn);
+    document.getElementById('reqType').value = type; reqSelDays = new Set(days);
+    document.getElementById('reqReason').value = why || ''; reqAdd(); };
+  pick(order[2], 'REQ', [2, 3], 'Graduation');
+  pick(order[0], 'VAC', [7]);
+  pick(order[4], 'D6', [1], 'covering');                 // a requested duty: not time off
+  const out = {};
+  const rows = requestReportRows(reqOffset);
+  out.rows = rows.map(r => `${r.name}|${r.day}|${r.label}|${r.reason}`).join(';');
+  out.expected = [`${names[order[0]]}|Mon|Vacation|`, `${names[order[2]]}|Wed|Req off|Graduation`, `${names[order[2]]}|Thu|Req off|Graduation`].join(';');
+  out.reasonIsComment = noteFor(rid(order[2]), sched.days[2]) === 'Graduation';
+  out.boxCleared = document.getElementById('reqReason').value === '';
+  // locked: the report reads the record, so a later rename doesn't show
+  const was = names[order[2]]; toggleCycleLock(); names[order[2]] = 'LATER NAME';
+  out.lockedName = requestReportRows(0).some(r => r.name === was) && !requestReportRows(0).some(r => r.name === 'LATER NAME');
+  names[order[2]] = was; lockedCycles = {};
+  closeRequests(); overrides = {}; notes = {}; render();
+  return out;
+});
+console.log('\n--- request report ---');
+check('report lists time-off requests in RN order, with reasons', rreport.rows === rreport.expected, rreport.rows);
+check('the Reason box saves that day\'s comment', rreport.reasonIsComment);
+check('the Reason box clears after adding', rreport.boxCleared);
+check('a locked fortnight\'s report uses the locked names', rreport.lockedName);
+
 /* ---------------- 3. stable ids: requests follow the nurse ---------------- */
 const idTest = await page.evaluate(() => {
   const days = computeSchedule(0).days;
