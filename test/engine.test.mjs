@@ -469,5 +469,36 @@ test('generateParts: requests always show, even in an unticked part', () => {
   assert.equal(g[7][5], 'VAC'); assert.equal(g[4][3], 'N7');
 });
 
+/* ---------- locked fortnight ---------- */
+test('a locked fortnight returns its saved grid — requests, frozen and rules ignored', () => {
+  const gk = Engine.isoKey(MONDAY);
+  const saved = Engine.computeSchedule(ctx(19), 0).sh;
+  const locked = { [gk]: Object.fromEntries(saved.map((r, i) => ['n' + i, r.slice()])) };
+  // a new request, a frozen grid and different rules must not change it
+  const c = ctx(19, { [DAY(2)]: { n5: 'VAC' } }, { frozen: { [gk]: { n5: Array(14).fill('D6') } }, seed: 999 });
+  c.locked = locked; c.nightMin = 3;
+  assert.deepEqual(Engine.computeSchedule(c, 0).sh, saved);
+});
+test('a locked fortnight: RNs added later are off, others unaffected', () => {
+  const gk = Engine.isoKey(MONDAY);
+  const saved = Engine.computeSchedule(ctx(19), 0).sh;
+  const c = ctx(20); c.locked = { [gk]: Object.fromEntries(saved.map((r, i) => ['n' + i, r.slice()])) };
+  const { sh } = Engine.computeSchedule(c, 0);
+  assert.deepEqual(sh[19], Array(14).fill('OFF'));
+  assert.deepEqual(sh.slice(0, 19), saved);
+});
+test('the fortnight after a locked one plans its seam from the locked grid', () => {
+  const gk = Engine.isoKey(MONDAY);
+  // n4 is NOT on the weekend turn in the live plan, but the locked grid has them
+  // working the closing Sat+Sun — the next fortnight must rest them on Tuesday
+  const row = Array(14).fill('OFF'); row[12] = 'D7'; row[13] = 'D7';
+  const c = ctx(19); c.locked = { [gk]: { n4: row } };
+  const live = Engine.computeSchedule(ctx(19), 0).sh[4];
+  assert.ok(!(WORK.has(live[12]) && WORK.has(live[13])), 'test premise: live plan has n4 off that weekend');
+  for (let s = 0; s < 10; s++) { c.seed = s * 7919;
+    const next = Engine.computeSchedule(c, 1).sh[4];
+    assert.ok(!(WORK.has(next[0]) && WORK.has(next[1])), `seed ${s}: no Sat-Sun-Mon-Tue run across the seam`); }
+});
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail === 0 ? 0 : 1);

@@ -148,6 +148,9 @@ input[type=date]:focus{border-color:var(--border-3)}
 .banner .bhint{opacity:.8}
 .banner.ok{background:var(--pos-bg);border-color:var(--pos-border);color:var(--pos)}
 .banner.warn{background:var(--s10-bg);border-color:var(--s10-bd);color:var(--warn)}
+#tbl.is-locked .sh-cell,#tbl.is-locked .rn-name{cursor:default}
+#tbl.is-locked .drag-h{visibility:hidden}
+#tbl.is-locked .sh-cell:hover{filter:none;outline:none}
 .banner.bad{background:var(--hol-bg);border-color:var(--hol-bd);color:var(--hol-fg)}
 /* "whose turn this cycle" info panel */
 .cyc-info{border:1px solid var(--border);border-radius:var(--r-lg);background:var(--panel);margin-bottom:var(--sp-5);overflow:hidden}
@@ -565,6 +568,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       </button>
       <button class="btn" id="clearFnBtn" onclick="clearCycle()" style="display:none" title="Delete everything in this fortnight">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>Clear
+      </button>
+      <button class="btn" id="lockBtn" onclick="toggleCycleLock()" aria-pressed="false" title="Lock this fortnight">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="lockLbl">Lock</span>
       </button>
       <span class="divider"></span>
       <button class="btn" id="undoBtn" onclick="undo()" title="Undo the last change (Ctrl+Z)">
@@ -1088,7 +1094,12 @@ const GEN_PARTS=['weekdays','weekends','nights'];
 const GEN_LABEL={weekdays:'Weekdays',weekends:'Weekends',nights:'Nights'};
 let genParts={weekdays:true,weekends:true,nights:true};
 let genDone={};
-let genPlan={};   // { cycleMonday: { id: [14] } } the full plan while parts are still to come
+let genPlan={};
+// LOCKED fortnights — view-only records, exactly as they were when locked:
+// { cycleMonday: { at, rns:[{id,name,g,row}] (display order), staff:[{id,g,name}],
+//   staffShifts, flags, notes (only that fortnight's 14 days) } }
+// Nothing reaches a locked fortnight — not rules, requests, roster or list changes.
+let lockedCycles={};   // { cycleMonday: { id: [14] } } the full plan while parts are still to come
 function ensureGenParts(){if(!genParts||typeof genParts!=='object')genParts={};
   for(const p of GEN_PARTS)if(typeof genParts[p]!=='boolean')genParts[p]=true;}
 // the parts a fortnight has — a generated one saved before this existed has them all
@@ -1100,13 +1111,14 @@ function ensureFatigue(){if(!fatigue||typeof fatigue!=='object')fatigue={};
   if(!Number.isInteger(fatigue.minRest))fatigue.minRest=1;}
 let flags={};     // { 'YYYY-MM-DD': { id: true } } — cells the manager flagged to notice; id = RN stableId or staff id
 function isFlagged(id,dateObj){const o=flags[isoKey(dateObj)];return !!(o&&o[id]);}
-function setFlag(id,dateObj,on){const k=isoKey(dateObj);
+function setFlag(id,dateObj,on){const k=isoKey(dateObj);if(dayLocked(k))return;
   if(on){if(!flags[k])flags[k]={};flags[k][id]=true;}
   else if(flags[k]){delete flags[k][id];if(!Object.keys(flags[k]).length)delete flags[k];}}
 let notes={};     // { 'YYYY-MM-DD': { id: 'text' } } — a comment on one duty (why it's flagged, a swap, a note for the next manager)
 function noteFor(id,dateObj){const o=notes[isoKey(dateObj)];return (o&&o[id])||'';}
 function setNote(id,dateObj,txt){
   const k=isoKey(dateObj),v=String(txt||'').trim().slice(0,300);
+  if(dayLocked(k))return;
   if(v){if(!notes[k])notes[k]={};notes[k][id]=v;}
   else if(notes[k]){delete notes[k][id];if(!Object.keys(notes[k]).length)delete notes[k];}
 }
@@ -1140,6 +1152,7 @@ const PERSIST=[
   {k:'committedCycles',sync:1,undo:1,get:()=>committedCycles,apply:s=>{if(s.committedCycles&&typeof s.committedCycles==='object')committedCycles=s.committedCycles;}, set:v=>{committedCycles=clone(v);}},
   {k:'cycleSeeds', sync:1,undo:1,get:()=>cycleSeeds,      apply:s=>{if(s.cycleSeeds&&typeof s.cycleSeeds==='object')cycleSeeds=s.cycleSeeds;},  set:v=>{cycleSeeds=clone(v);}},
   {k:'frozen',     sync:1,undo:1,get:()=>frozen,          apply:s=>{frozen=(s.frozen&&typeof s.frozen==='object')?s.frozen:{};},                set:v=>{frozen=clone(v);}},
+  {k:'lockedCycles',sync:1,undo:1,get:()=>lockedCycles,   apply:s=>{lockedCycles=(s.lockedCycles&&typeof s.lockedCycles==='object')?s.lockedCycles:{};}, set:v=>{lockedCycles=clone(v);}},
   {k:'genPlan',    sync:1,undo:1,get:()=>genPlan,         apply:s=>{genPlan=(s.genPlan&&typeof s.genPlan==='object')?s.genPlan:{};},            set:v=>{genPlan=clone(v);}},
   {k:'genDone',    sync:1,undo:1,get:()=>genDone,         apply:s=>{genDone=(s.genDone&&typeof s.genDone==='object')?s.genDone:{};},            set:v=>{genDone=clone(v);}},
   {k:'flags',      sync:1,undo:1,get:()=>flags,           apply:s=>{flags=(s.flags&&typeof s.flags==='object')?s.flags:{};},                    set:v=>{flags=clone(v);}},
@@ -1434,7 +1447,8 @@ function schedCtx(){
   syncN();
   ensureNightList();
   const si=document.getElementById('startDate').value;
-  return {N,groups,order,ids,overrides,frozen,committedCycles,cycleSeeds,manualMode,seed,nightList,
+  const locked={};for(const gk in lockedCycles){const o={};for(const r of lockedCycles[gk].rns||[])o[r.id]=r.row;locked[gk]=o;}
+  return {N,groups,order,ids,overrides,frozen,committedCycles,cycleSeeds,manualMode,seed,nightList,locked,
     dailyMin:DAILY_MIN,coreDay:CORE_DAY,work:WORK_TYPES,nightMin:nightMinOf(),
     anchorMonday:getMonday(si?new Date(si):new Date())};
 }
@@ -1454,6 +1468,19 @@ function nightShort(sh,d){ // fewer RNs on nights than the N7 minimum
 }
 
 function renderTable(){
+  // the grid and totals are a VIEW: a locked fortnight draws from its record
+  withLockedView(renderGrid);
+  document.getElementById('tbl').classList.toggle('is-locked',cycleLocked());
+  renderTracker();
+  renderBanner();
+  renderCycleInfo();
+  updateLockUI();
+  // NOTE: no saveState() here. Rendering is not a data change, and saving on
+  // every render made each connected device push its whole state to the cloud
+  // just for viewing/navigating — letting a device sitting on a stale copy
+  // overwrite an edit made elsewhere. Every mutating action saves explicitly.
+}
+function renderGrid(){
   const{days,sh,weekStart}=sched;
   // which column (if any) is the real calendar "today" — only set when the
   // cycle on screen actually contains today, so the highlight self-hides.
@@ -1507,7 +1534,7 @@ function renderTable(){
   for(const g of STAFF_GROUPS){
     h+=`<tr class="grp-row"><td class="grp-lbl">${escapeHtml(staffGroupLabel(g.key))}</td><td colspan="16"></td></tr>`;
     for(const p of staffOf(g.key)){
-      h+=`<tr><td class="rn-col"><input class="staff-name" value="${escapeHtml(p.name)}" onchange="setStaffName('${p.id}',this.value)" aria-label="Name"></td>`;
+      h+=`<tr><td class="rn-col"><input class="staff-name" value="${escapeHtml(p.name)}" onchange="setStaffName('${p.id}',this.value)" aria-label="Name"${cycleLocked()?' readonly':''}></td>`;
       let w1=0,w2=0;
       for(let d=0;d<14;d++){
         const s=staffShiftAt(p.id,days[d]);
@@ -1534,14 +1561,14 @@ function renderTable(){
     <div class="sum"><div class="val">${nt}</div><div class="lbl">Nights</div></div>
     <div class="sum ${allOk?'ok':'warn'}"><div class="val">${comp}/${N}</div><div class="lbl">RNs at 7</div></div>
   `;
-
-  renderTracker();
-  renderBanner();
-  renderCycleInfo();
-  // NOTE: no saveState() here. Rendering is not a data change, and saving on
-  // every render made each connected device push its whole state to the cloud
-  // just for viewing/navigating — letting a device sitting on a stale copy
-  // overwrite an edit made elsewhere. Every mutating action saves explicitly.
+}
+function updateLockUI(){
+  const b=document.getElementById('lockBtn');if(!b)return;
+  const on=cycleLocked();
+  b.classList.toggle('accent',on);b.setAttribute('aria-pressed',on?'true':'false');
+  document.getElementById('lockLbl').textContent=on?'Locked':'Lock';
+  b.title=on?'This fortnight is view-only. Press to unlock it (asks to confirm).'
+            :'Lock this fortnight: view-only, and no rule, request or roster change can alter it';
 }
 
 // Which nurses are off their exact-7 count or over a week's split (4/3 · 3/4),
@@ -1600,6 +1627,14 @@ function fatigueReport(days,sh){
 function renderBanner(){
   const{days,sh}=sched;
   const el=document.getElementById('banner');
+  // Locked fortnight: a fixed record — say so instead of re-checking live rules
+  const LK=lockedCycles[cycleStartISO(cycleOffset)];
+  if(LK){
+    const at=new Date(LK.at);
+    el.className='banner';
+    el.innerHTML=`<span class="bic">🔒</span><div>This fortnight is <b>locked</b>${isNaN(at)?'':` since <b>${fmt(at)} ${at.getFullYear()}</b>`} — view only. It shows exactly what was locked: later changes to rules, requests, the roster or lists don't affect it. Press <b>Locked</b> to unlock.</div>`;
+    return;
+  }
   // Manual mode, empty (ungenerated) fortnight: friendly prompt, no false warnings
   if(manualMode&&!committedCycles[cycleStartISO(cycleOffset)]){
     const reqCount=(()=>{let c=0;for(let d=0;d<14;d++){const o=overrides[isoKey(days[d])];if(o)c+=Object.keys(o).length;}return c;})();
@@ -1729,6 +1764,7 @@ function setStaffName(id,v){
 }
 function setStaffShift(id,dateObj,type){
   const k=isoKey(dateObj);
+  if(dayLocked(k))return;
   if(type==='OFF'){ if(staffShifts[k]){delete staffShifts[k][id];if(!Object.keys(staffShifts[k]).length)delete staffShifts[k];} }
   else{ if(!staffShifts[k])staffShifts[k]={}; staffShifts[k][id]=type; }
 }
@@ -1848,6 +1884,7 @@ function nightBlockers(off){
 // clear the day-shift entries that are cancelling this cycle's night turn
 // (holidays, vacations, sick leave and requested-off are kept — those are real absences)
 function freeNightTurn(){
+  if(cycleLocked()){lockedToast();return;}
   if(!sched)return;
   const bl=nightBlockers(cycleOffset).filter(x=>x.blocked.length);
   if(!bl.length){toast('Nothing is blocking this cycle\'s night turn');return;}
@@ -2183,6 +2220,11 @@ function resetAll(){
    correct after manual edits and requests — it never re-derives the rotation. */
 function renderCycleInfo(){
   const body=document.getElementById('cycInfoBody');if(!body||!sched)return;
+  // a locked fortnight is a fixed record; this panel describes the LIVE rotation
+  // and roster, so it would contradict the record — hide it while locked
+  const sec=document.getElementById('cycInfoSection');
+  if(sec)sec.hidden=cycleLocked();
+  if(cycleLocked())return;
   const{days,sh}=sched;
   const nm=i=>escapeHtml(names[i]);
   const range=(a,b)=>`${fmt(days[a])} – ${fmt(days[b])}`;
@@ -2291,7 +2333,7 @@ let dragSrcPos=null;
 function rowDragStart(e,pos){dragSrcPos=pos;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(pos));}catch(_){}}
 function rowDragEnd(){dragSrcPos=null;document.querySelectorAll('#tbl tr.drag-over').forEach(r=>r.classList.remove('drag-over'));}
 function rowDragOver(e){if(dragSrcPos===null)return;e.preventDefault();e.dataTransfer.dropEffect='move';const tr=e.currentTarget;document.querySelectorAll('#tbl tr.drag-over').forEach(r=>{if(r!==tr)r.classList.remove('drag-over');});tr.classList.add('drag-over');}
-function rowDrop(e,pos){e.preventDefault();const from=dragSrcPos;rowDragEnd();if(from===null||from===pos)return;moveInOrder(from,pos);}
+function rowDrop(e,pos){e.preventDefault();if(cycleLocked()){rowDragEnd();lockedToast();return;}const from=dragSrcPos;rowDragEnd();if(from===null||from===pos)return;moveInOrder(from,pos);}
 function moveInOrder(from,to){
   if(from<0||from>=order.length||to<0||to>=order.length)return;
   const before=snapshot();
@@ -2412,6 +2454,7 @@ function reqAdd(){
   if(!reqSelDays.size){msg.textContent='Pick at least one day.';return;}
   if(who.staff&&(type==='OFF')){msg.textContent='Support staff are off by default — pick a shift (or Vac/Hol).';return;}
   const days=reqDates(),before=snapshot();
+  if(cycleLocked(reqOffset)){msg.textContent='🔒 This fortnight is locked — unlock it to add requests.';return;}
   let n=0;
   for(const d of reqSelDays){
     if(who.staff){setStaffShift(who.id,days[d],type);}
@@ -2438,6 +2481,7 @@ function reqAdd(){
   setTimeout(()=>{msg.textContent='';msg.classList.remove('req-warn');},warn?7000:2600);
 }
 function reqDelete(k,id){
+  if(dayLocked(k)){toast('🔒 That day is in a locked fortnight — unlock it to remove the request');return;}
   const p=staff.find(x=>x.id===id);
   if(p){
     if(!staffShifts[k]||staffShifts[k][id]===undefined)return;
@@ -2467,6 +2511,7 @@ function prev(){cycleOffset--;render();}
 function next(){cycleOffset++;render();}
 function goToday(){cycleOffset=autoOffset(document.getElementById('startDate').value);render();toast('Jumped to the current cycle');}
 function regen(){
+  if(cycleLocked()){lockedToast();return;}
   const b=snapshot();pushHistory('Regenerated schedule',b);
   // rebuild the cycle on screen from scratch with the CURRENT rules: drop any
   // baked (frozen) grid + its saved seed for this fortnight, so a stale grid from
@@ -2525,6 +2570,63 @@ function cycleDayKeys(off){
 }
 // ISO date of a cycle's start Monday — the key for committed fortnights / seeds
 function cycleStartISO(off){return cycleDayKeys(off)[0];}
+/* ---------- locked (view-only) fortnights ---------- */
+function cycleLocked(off=cycleOffset){return !!lockedCycles[cycleStartISO(off)];}
+// is the fortnight containing this ISO day locked?
+function dayLocked(k){
+  if(!Object.keys(lockedCycles).length)return false;
+  const anchor=getMonday(new Date(cycleDayKeys(0)[0]+'T00:00:00'));
+  const idx=Math.round((new Date(k+'T00:00:00')-anchor)/86400000);
+  return cycleLocked(Math.floor(idx/14));
+}
+function lockedToast(){toast('🔒 This fortnight is locked — view only. Press Locked to unlock it.');}
+// Run a VIEW (the grid, the exports) against the locked record instead of the
+// live roster: names, groups, order, rows, support staff, flags and comments are
+// swapped in for the call and always put back. Only for code that reads the
+// current fortnight — never anything that recomputes other cycles.
+function withLockedView(fn){
+  const L=lockedCycles[cycleStartISO(cycleOffset)];
+  if(!L)return fn();
+  const was={names,groups,N,order,ids,holBal,vacBal,staff,staffShifts,flags,notes,sched};
+  const bal=(arr,id)=>{const j=was.ids.indexOf(id);return j>=0?arr[j]:0;};
+  try{
+    names=L.rns.map(r=>r.name);groups=L.rns.map(r=>r.g);ids=L.rns.map(r=>r.id);
+    N=names.length;order=names.map((_,i)=>i);
+    holBal=L.rns.map(r=>bal(was.holBal,r.id));vacBal=L.rns.map(r=>bal(was.vacBal,r.id));
+    staff=(L.staff||[]).map(p=>({...p}));staffShifts=L.staffShifts||{};flags=L.flags||{};notes=L.notes||{};
+    sched={...was.sched,sh:L.rns.map(r=>r.row.slice())};
+    return fn();
+  }finally{
+    ({names,groups,N,order,ids,holBal,vacBal,staff,staffShifts,flags,notes,sched}=was);
+  }
+}
+function toggleCycleLock(){
+  const gk=cycleStartISO(cycleOffset),span=`${fmt(sched.days[0])} – ${fmt(sched.days[13])}`;
+  const before=snapshot();
+  if(lockedCycles[gk]){
+    if(!confirm(`Unlock this fortnight (${span})?\n\nIt becomes editable again and stays exactly as it is now — nothing is regenerated.`))return;
+    // bake the record back as a generated fortnight, so unlocking changes nothing
+    // on screen; its support-staff shifts, flags and comments come back too
+    const L=lockedCycles[gk],keys=cycleDayKeys(cycleOffset);
+    const snap={};for(const r of L.rns)if(ids.includes(r.id))snap[r.id]=r.row.slice();
+    frozen[gk]=snap;committedCycles[gk]=true;delete genDone[gk];delete genPlan[gk];
+    for(const k of keys){
+      for(const [store,src] of [[staffShifts,L.staffShifts],[flags,L.flags],[notes,L.notes]]){
+        delete store[k];if(src&&src[k])store[k]={...src[k]};}
+    }
+    delete lockedCycles[gk];
+    pushHistory(`Unlocked fortnight ${span}`,before);
+    render();saveState();toast('🔓 Fortnight unlocked — editable again');
+    return;
+  }
+  const keys=cycleDayKeys(cycleOffset),pick=store=>{const o={};for(const k of keys)if(store[k])o[k]={...store[k]};return o;};
+  normalizeOrder();ensureStaff();
+  lockedCycles[gk]={at:new Date().toISOString(),
+    rns:order.map(i=>({id:ids[i],name:names[i],g:groups[i],row:sched.sh[i].slice()})),
+    staff:staff.map(p=>({...p})),staffShifts:pick(staffShifts),flags:pick(flags),notes:pick(notes)};
+  pushHistory(`Locked fortnight ${span}`,before);
+  render();saveState();toast('🔒 Fortnight locked — view only');
+}
 // everything that lives inside ONE fortnight: the manager's entries, the support
 // staff's, the flags and comments on those days, and the generated grid itself.
 // Counted so Clear can say exactly what it is about to remove.
@@ -2571,6 +2673,7 @@ function genNext(gk){
   return {ticked,done,add,regen:!add.length};
 }
 function generateFortnight(){
+  if(cycleLocked()){lockedToast();return;}
   const gk=cycleStartISO(cycleOffset),plan=genNext(gk);
   if(!plan.ticked.length){toast('Nothing ticked — choose what to generate in Settings → Generate');return;}
   const before=snapshot(),ctx=schedCtx();
@@ -2614,6 +2717,7 @@ function generateFortnight(){
 // touched, and because every store it clears is an `undo` field of PERSIST, the
 // snapshot taken here lets Undo (Ctrl+Z) put all of it back exactly.
 function clearCycle(){
+  if(cycleLocked()){lockedToast();return;}
   const t=cycleTally(cycleOffset);
   if(!t.total){toast('This fortnight is already empty');return;}
   const parts=cycleTallyParts(t);
@@ -2654,6 +2758,7 @@ document.getElementById('startDate').addEventListener('change',function(){
 
 /* ---------- cell / name edit ---------- */
 function openCellM(ri,di){
+  if(cycleLocked()){lockedToast();return;}
   mStaffId=null;
   mRn=ri;mDay=di;mSel=sched.sh[ri][di];
   document.getElementById('mTitle').textContent=`${names[ri]} · ${DAYS[di%7]} ${fmt(sched.days[di])}`;
@@ -2667,6 +2772,7 @@ function openCellM(ri,di){
 }
 // support-staff cell: same picker, but written to staffShifts (no RN rules involved)
 function openStaffCellM(id,di){
+  if(cycleLocked()){lockedToast();return;}
   const p=staff.find(x=>x.id===id);if(!p)return;
   mStaffId=id;mRn=null;mDay=di;mSel=staffShiftAt(id,sched.days[di]);
   document.getElementById('mTitle').textContent=`${p.name} · ${DAYS[di%7]} ${fmt(sched.days[di])}`;
@@ -2777,6 +2883,7 @@ function resetCell(){ // remove a manual entry / request for this cell -> back t
 function closeCell(){document.getElementById('cellModal').classList.remove('open');}
 
 function openNameM(i){
+  if(cycleLocked()){toast('🔒 Locked fortnight — rename or move RNs from an unlocked fortnight or Settings');return;}
   mEditIdx=i;
   document.getElementById('nInput').value=names[i];
   document.getElementById('gSel').value=groups[i];
@@ -2897,8 +3004,10 @@ const XL_PAL={
 };
 function colL(n){let s='';while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=(n-m-1)/26;}return s;}
 
-async function exportExcel(){
-  if(!window.ExcelJS){exportCSV();return;}
+function exportExcel(){return withLockedView(exportExcelView);}
+// every read happens before the first await, i.e. inside the locked view
+async function exportExcelView(){
+  if(!window.ExcelJS){exportCSVView();return;}
   try{
     const {days,sh,weekStart}=sched;
     const P=XL_PAL[theme==='light'?'light':'dark'];
@@ -3049,7 +3158,8 @@ async function exportExcel(){
 }
 // conditional-formatting fills use bgColor (ExcelJS quirk)
 function solidCF(argb){return {type:'pattern',pattern:'solid',bgColor:{argb}};}
-function exportCSV(){
+function exportCSV(){return withLockedView(exportCSVView);}
+function exportCSVView(){
   const {rows}=exportRows();const tr=trackerRows();
   const esc=v=>{v=String(v==null?'':v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;};
   const csv=[...rows,[],['Balances'],...tr].map(r=>r.map(esc).join(',')).join('\n');
@@ -3072,7 +3182,8 @@ const PDF_COL={
 // shared PDF typography/colour so schedule, report and fairness look like one family
 const PDF_T={title:15,sub:9,section:11,ink:[23,27,34],subInk:[90,100,114],offInk:[90,100,114],
   line:[205,210,218],headBg:[240,242,246],headInk:[64,74,90],footBg:[233,236,241],zebra:[248,249,251]};
-function exportPDF(){
+function exportPDF(){return withLockedView(exportPDFView);}
+function exportPDFView(){
   const J=window.jspdf&&window.jspdf.jsPDF;
   const{days,sh,weekStart}=sched;
   if(!J){ // library unavailable (offline) -> browser print (may show URL footer)

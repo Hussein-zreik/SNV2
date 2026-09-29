@@ -14,7 +14,7 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 ```bash
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
-npm run test:unit      # 48 engine unit tests in plain Node, ~0.5s
+npm run test:unit      # 51 engine unit tests in plain Node, ~0.5s
 npm test               # full rule audit driving the app in headless Chromium, ~30s
 ```
 
@@ -175,6 +175,24 @@ part is in, the button reads **Regenerate** and re-plans only the ticked parts a
 rest. `genPlan` is dropped when all three parts are in. `genDone`/`genPlan` are cleared
 wherever `frozen` is (Clear, Regenerate in Auto, Rebuild, Free the night turn). While a
 fortnight is partly generated, the banner shows what is left instead of staffing checks.
+
+**Locked fortnights (the Lock button).** `lockedCycles[cycleMonday]` is a view-only
+*record* taken at lock time: RN rows in display order with their names, groups and
+shifts, plus that fortnight's support staff, staff shifts, flags and comments. It is
+the highest-priority layer — above `frozen` and requests:
+- the engine returns it first (`ctx.locked`, built in `schedCtx()`), so the next
+  fortnight's seam, reports and fairness all read the locked shifts;
+- the grid and the PDF/Excel/CSV exports render it through `withLockedView(fn)`,
+  which swaps the roster globals for the record and **always restores them**. Only
+  wrap code that reads the *current* fortnight — anything that recomputes other
+  cycles (`computeSchedule`, `turnFor`, `monthlyReport`, `ensureNightList`) must run
+  outside it, or it will see the record's roster as the live one;
+- every edit path is blocked while locked: cell/name editors, drag reorder, requests
+  (`reqAdd`/`reqDelete`), `setFlag`/`setNote`/`setStaffShift` (via `dayLocked()`),
+  Generate, Regenerate, Clear and Free the night turn. The turn panel is hidden;
+- **Unlock** (confirm) bakes the record back into `frozen` (+ its staff shifts, flags
+  and comments), so nothing on screen changes. RNs removed while it was locked drop
+  out at that point.
 
 `nightBlockers()` finds entries sitting on a night-turn nurse's night days. The banner
 only raises them when the night actually ended up short (most are backfilled).

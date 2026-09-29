@@ -18,6 +18,9 @@
      ids            stable id per RN (index -> id)
      overrides      { 'YYYY-MM-DD': { id: shift } } requested/locked cells
      frozen         { 'YYYY-MM-DD'(cycle Monday): { id: [14 shifts] } }
+     locked         { 'YYYY-MM-DD'(cycle Monday): { id: [14 shifts] } } (optional)
+                    a LOCKED fortnight: returned exactly as saved — no rules,
+                    requests or roster changes reach it
      committedCycles{ gk: true } which fortnights were generated (manual nights)
      cycleSeeds     { gk: seed } per-fortnight seed
      manualMode     bool
@@ -243,6 +246,12 @@
     }
 
     const gk=isoKey(base);
+    // ----- LOCKED fortnight: view-only, exactly as it was when locked -----
+    if(ctx.locked&&ctx.locked[gk]){
+      const L=ctx.locked[gk];
+      for(let i=0;i<N;i++){const row=L[ids[i]];for(let d=0;d<14;d++)sh[i][d]=row?row[d]:'OFF';}
+      return {days:days14,sh,weekStart:base};
+    }
     // ----- FROZEN (hand-generated) fortnight -----
     if(frozen[gk]){
       for(let i=0;i<N;i++){const row=frozen[gk][ids[i]];if(row)for(let d=0;d<14;d++)sh[i][d]=row[d];}

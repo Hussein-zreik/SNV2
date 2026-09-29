@@ -392,6 +392,69 @@ check('Undo restores the previous part state', parts.undoRestores);
 check('Clear wipes the part state', parts.clearWipes);
 check('nothing ticked: Generate changes nothing', parts.noneTicked);
 
+/* ---------------- 2d. locked fortnight: view-only, immune to later changes ---------------- */
+const lock = await page.evaluate(() => {
+  const gridRows = () => [...document.querySelectorAll('#tbl tbody tr')].filter(r => r.querySelector('.rn-name'))
+    .map(r => r.textContent.replace(/\s+/g, ' ').trim());
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {}; lockedCycles = {};
+  manualMode = false; cycleOffset = 0; seed = 4242; render();
+  const out = {};
+  const d0 = sched.days;
+  setFlag(rid(2), d0[3], true); setNote(rid(2), d0[3], 'kept note'); render();
+  const before = gridRows(), lockNames = order.map(i => names[i]), staffBefore = JSON.stringify(staffShifts);
+  toggleCycleLock();
+  out.btnLabel = document.getElementById('lockLbl').textContent;
+  out.bannerLocked = document.getElementById('banner').textContent.includes('locked');
+
+  // try to change everything
+  const exportRowsLocked = () => withLockedView(() => exportRows().rows.slice(1, 1 + N).map(r => r[0]));
+  names[order[0]] = 'RENAMED'; DAILY_MIN[0].D6 = 4; seed = 1;
+  overrides[isoKey(d0[4])] = { [rid(5)]: 'VAC' };
+  moveInOrder(0, 3);
+  removeRN(order[order.length - 1]);
+  render();
+  out.gridSame = JSON.stringify(gridRows()) === JSON.stringify(before);
+  out.nameKept = JSON.stringify([...document.querySelectorAll('#tbl .rn-name')].map(e => e.textContent)) === JSON.stringify(lockNames);
+  regen(); clearCycle(); generateFortnight(); freeNightTurn();
+  out.gridSameAfterActions = JSON.stringify(gridRows()) === JSON.stringify(before);
+  openCellM(0, 0); out.cellBlocked = !document.getElementById('cellModal').classList.contains('open');
+  setFlag(rid(1), d0[1], true); setStaffShift(staff[0].id, d0[1], 'D6');
+  out.flagBlocked = !isFlagged(rid(1), d0[1]) && JSON.stringify(staffShifts) === staffBefore;
+  out.exportSame = JSON.stringify(exportRowsLocked()) === JSON.stringify(lockNames);
+  out.flagShown = !!document.querySelector('#tbl .sh-cell.flagged');
+
+  // unlock: stays exactly as it was (for RNs still on the roster), editable again
+  window.__c = window.confirm; window.confirm = () => true;
+  const keptRows = gridRows();
+  toggleCycleLock();
+  window.confirm = window.__c;
+  const after = gridRows();
+  const byId = rows => Object.fromEntries(rows.map(t => [t.split(' ').slice(2, 16).join(' '), 1]));
+  out.unlockSameShifts = Object.keys(byId(after)).every(k => byId(keptRows)[k]);
+  out.unlockNote = noteFor(rid(2), d0[3]) === 'kept note';
+  openCellM(order[0], 0); out.cellOpensAfterUnlock = document.getElementById('cellModal').classList.contains('open'); closeCell();
+
+  undo();                                                   // undo the unlock -> locked again
+  out.undoRelocks = cycleLocked();
+
+  lockedCycles = {}; overrides = {}; flags = {}; notes = {}; frozen = {}; committedCycles = {}; DAILY_MIN[0].D6 = 2; render();
+  return out;
+});
+console.log('\n--- locked fortnight ---');
+check('Lock button reads Locked', lock.btnLabel === 'Locked', lock.btnLabel);
+check('banner says the fortnight is locked', lock.bannerLocked);
+check('rule, request, rename, reorder and removal leave it unchanged', lock.gridSame);
+check('locked names are the names at lock time', lock.nameKept);
+check('Regenerate / Clear / Generate / Free nights do nothing', lock.gridSameAfterActions);
+check('cells cannot be opened for editing', lock.cellBlocked);
+check('flags and support-staff shifts cannot change', lock.flagBlocked);
+check('exports show the locked record', lock.exportSame);
+check('flags made before locking still show', lock.flagShown);
+check('unlocking keeps every shift as it was', lock.unlockSameShifts);
+check('unlocking keeps comments', lock.unlockNote);
+check('cells are editable again after unlocking', lock.cellOpensAfterUnlock);
+check('Undo re-locks after an unlock', lock.undoRelocks);
+
 /* ---------------- 3. stable ids: requests follow the nurse ---------------- */
 const idTest = await page.evaluate(() => {
   const days = computeSchedule(0).days;
@@ -448,12 +511,13 @@ const reg2 = await page.evaluate(() => {
   overrides = { [isoKey(days[2])]: { [rid(3)]: 'VAC' } };
   genParts = { weekdays: true, weekends: false, nights: false };
   genDone = { probe: ['weekdays'] }; genPlan = { probe: { [rid(0)]: Array(14).fill('D6') } };
+  lockedCycles = { probe: { at: 'x', rns: [{ id: rid(0), name: 'Probe', g: 'A', row: Array(14).fill('N7') }] } };
   const before = customShifts.length;
   const saved = JSON.parse(JSON.stringify(cloudStateObj()));
   // wipe every one
   flags = {}; defHol = 14; defVac = 21; DAILY_MIN[0].D6 = 2;
   fatigue.maxNights = 8; staffLabels = {}; overrides = {};
-  genParts = { weekdays: true, weekends: true, nights: true }; genDone = {}; genPlan = {};
+  genParts = { weekdays: true, weekends: true, nights: true }; genDone = {}; genPlan = {}; lockedCycles = {};
   applyStateObject(saved); render();
   out.roundTrip = {
     flags: !!(flags[isoKey(days[1])] && flags[isoKey(days[1])][rid(2)]),
@@ -465,7 +529,8 @@ const reg2 = await page.evaluate(() => {
     customShifts: customShifts.length === before,
     genParts: genParts.weekends === false && genParts.weekdays === true,
     genDone: !!(genDone.probe && genDone.probe[0] === 'weekdays'),
-    genPlan: !!(genPlan.probe && genPlan.probe[rid(0)][3] === 'D6')
+    genPlan: !!(genPlan.probe && genPlan.probe[rid(0)][3] === 'D6'),
+    lockedCycles: !!(lockedCycles.probe && lockedCycles.probe.rns[0].name === 'Probe')
   };
 
   // undo round-trip: snapshot -> mutate -> restore reverts every undo field
@@ -477,7 +542,7 @@ const reg2 = await page.evaluate(() => {
   out.undoReverted = Object.keys(flags).length === 0 && Object.keys(overrides).length === 0;
 
   // reset
-  genParts = { weekdays: true, weekends: true, nights: true }; genDone = {}; genPlan = {};
+  genParts = { weekdays: true, weekends: true, nights: true }; genDone = {}; genPlan = {}; lockedCycles = {};
   flags = {}; overrides = {}; defHol = 14; defVac = 21; DAILY_MIN[0].D6 = 2;
   fatigue.maxNights = 8; staffLabels = {}; render();
   return out;
