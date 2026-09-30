@@ -14,7 +14,7 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 ```bash
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
-npm run test:unit      # 51 engine unit tests in plain Node, ~0.5s
+npm run test:unit      # 53 engine unit tests in plain Node, ~0.5s
 npm test               # full rule audit driving the app in headless Chromium, ~30s
 ```
 
@@ -175,6 +175,11 @@ part is in, the button reads **Regenerate** and re-plans only the ticked parts a
 rest. `genPlan` is dropped when all three parts are in. `genDone`/`genPlan` are cleared
 wherever `frozen` is (Clear, Regenerate in Auto, Rebuild, Free the night turn). While a
 fortnight is partly generated, the banner shows what is left instead of staffing checks.
+Per-shift ticks (D6, D7, S8, S9, S10 in `genParts.shifts`) **combine** with the part ticks,
+so everything is tracked in *units* — `'weekdays:D6'`, `'weekends:D7'`, `'nights:N7'`
+(`Engine.unitOf`, `ALL_UNITS`, `tickedUnits()`); `pickParts`/`revealParts` accept a unit
+array as `fill`. Weekends only has the D7 unit (the weekend turn); N7 is the Nights tick
+alone. `genDone` holds units; an older entry of bare part names means all their units.
 
 **Locked fortnights (the Lock button).** `lockedCycles[cycleMonday]` is a view-only
 *record* taken at lock time: RN rows in display order with their names, groups and

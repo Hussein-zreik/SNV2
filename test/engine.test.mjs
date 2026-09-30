@@ -500,5 +500,26 @@ test('the fortnight after a locked one plans its seam from the locked grid', () 
     assert.ok(!(WORK.has(next[0]) && WORK.has(next[1])), `seed ${s}: no Sat-Sun-Mon-Tue run across the seam`); }
 });
 
+test('per-shift units: reveal shift by shift -> identical to one full generate', () => {
+  const units = ['weekdays:D6', 'weekdays:S9', 'nights:N7', 'weekdays:D7', 'weekends:D7', 'weekdays:S8', 'weekdays:S10'];
+  for (let s = 0; s < 20; s++) {
+    const c = ctx(19, { [DAY(2)]: { n4: 'REQ' }, [DAY(9)]: { n12: 'VAC' } }, { seed: s * 7919 });
+    const plan = Engine.planFortnight(c, 0, null);
+    let g = Engine.pickParts(c, 0, plan, [units[0]], null);
+    for (let i = 0; i < 19; i++) for (let d = 0; d < 14; d++) {
+      const x = g[i][d];
+      if (x !== 'OFF' && x !== 'REQ' && x !== 'VAC') assert.ok(x === 'D6' && d % 7 < 5, `only weekday D6 first (n${i} d${d}: ${x})`);
+    }
+    for (const u of units.slice(1)) g = Engine.revealParts(c, 0, plan, g, [u]);
+    assert.deepEqual(g, plan, `seed ${s}`);
+  }
+});
+test('per-shift units: Weekends + D7 unticked -> no weekend duties', () => {
+  const c = ctx(19), plan = Engine.planFortnight(c, 0, null);
+  const g = Engine.pickParts(c, 0, plan, ['weekdays:D6', 'weekdays:D7', 'nights:N7'], null);
+  for (const d of [5, 6, 12, 13]) assert.equal(cnt(g, d, 'D7'), 0, `day ${d}`);
+  assert.ok(g.some(r => r.slice(0, 5).includes('D7')), 'weekday D7 still placed');
+});
+
 console.log(`\n${pass} passed, ${fail} failed.`);
 process.exit(fail === 0 ? 0 : 1);

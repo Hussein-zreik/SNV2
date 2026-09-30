@@ -540,6 +540,11 @@
                                   passes wins; the banner shows what is left short)
      Rows are by RN index. */
   const partOf=(s,d)=>s==='N7'?'nights':(d%7>=5?'weekends':'weekdays');
+  // A finer slice for the per-shift ticks: 'weekdays:D6', 'weekends:D7', 'nights:N7'.
+  // `fill` (and `add`) is either { weekdays, weekends, nights } booleans, or an
+  // ARRAY of units — then a cell is in it only if its part AND its shift are.
+  const unitOf=(s,d)=>partOf(s,d)+':'+s;
+  const inFill=(fill,s,d)=>Array.isArray(fill)?fill.includes(unitOf(s,d)):!!fill[partOf(s,d)];
   const reqOf=(ctx,off)=>{const base=addDays(ctx.anchorMonday,off*14),K=Array.from({length:14},(_,d)=>isoKey(addDays(base,d)));
     return (i,d)=>{const o=ctx.overrides[K[d]];return o&&o[ctx.ids[i]]!==undefined?o[ctx.ids[i]]:null;};};
   const keptOf=(ctx,keep)=>(i,d)=>{const r=keep&&keep[ctx.ids[i]];return r&&r[d]&&r[d]!=='OFF'?r[d]:null;};
@@ -559,7 +564,7 @@
     return plan.map((row,i)=>row.map((s,d)=>{
       const k=kept(i,d);if(k!==null)return k;
       const r=req(i,d);if(r!==null)return r;
-      return s!=='OFF'&&fill[partOf(s,d)]?s:'OFF';
+      return s!=='OFF'&&inFill(fill,s,d)?s:'OFF';
     }));
   }
   function revealParts(ctx,off,plan,grid,add){
@@ -572,7 +577,7 @@
         let n=0;for(let d=w*7;d<w*7+7;d++)if(isEntry(out[i][d]))n++;
         for(let d=w*7;d<w*7+7&&n<split[w];d++){
           const s=plan[i]&&plan[i][d];
-          if(!s||s==='OFF'||out[i][d]!=='OFF'||req(i,d)!==null||!add[partOf(s,d)])continue;
+          if(!s||s==='OFF'||out[i][d]!=='OFF'||req(i,d)!==null||!inFill(add,s,d))continue;
           out[i][d]=s;n++;
         }
       }
@@ -584,7 +589,7 @@
 
   const Engine={getMonday,addDays,isoKey,mkRng,shuffleArr,maxRunLen,streak,dtc,
     groupSeq,pairAt,turnFor,repairRuns,swapRepair,pickWeekdaySubset,computeSchedule,rebalanceRow,
-    partOf,planFortnight,pickParts,revealParts,generateParts};
+    partOf,unitOf,planFortnight,pickParts,revealParts,generateParts};
 
   if(typeof module!=='undefined'&&module.exports)module.exports=Engine;   // Node
   if(root){                                                               // browser

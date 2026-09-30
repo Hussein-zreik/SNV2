@@ -364,7 +364,9 @@ const parts = await page.evaluate(() => {
   out.bannerFull = !bnr().includes('Partly generated');
 
   undo();                                                              // back to 2 parts
-  out.undoRestores = partsDone(cycleStartISO(0)).length === 2 && sched.sh.every(r => [5,6,12,13].every(d => r[d] !== 'D7'));
+  const pd = partsDone(cycleStartISO(0));
+  out.undoRestores = pd.includes('nights:N7') && pd.includes('weekdays:D6') && !pd.includes('weekends:D7')
+    && sched.sh.every(r => [5,6,12,13].every(d => r[d] !== 'D7'));
   clearCycle.__confirm = window.confirm; window.confirm = () => true; clearCycle(); window.confirm = clearCycle.__confirm;
   out.clearWipes = !genDone[cycleStartISO(0)] && !genPlan[cycleStartISO(0)];
 
@@ -391,6 +393,39 @@ check('banner back to normal checks once complete', parts.bannerFull);
 check('Undo restores the previous part state', parts.undoRestores);
 check('Clear wipes the part state', parts.clearWipes);
 check('nothing ticked: Generate changes nothing', parts.noneTicked);
+
+/* ---------------- 2c-bis. per-shift ticks (combine with the part ticks) ---------------- */
+const pshift = await page.evaluate(() => {
+  const ENTRY = new Set(['D6','D7','S8','S9','S10','N7','HOL','VAC','SL']);
+  const wk = (row, w) => row.slice(w*7, w*7+7).filter(x => ENTRY.has(x)).length;
+  const setAll = (parts, shifts) => { for (const p of ['weekdays','weekends','nights']) setGenPart(p, parts.includes(p));
+    for (const x of ['D6','D7','S8','S9','S10']) setGenPart(x, shifts.includes(x)); };
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {}; lockedCycles = {};
+  manualMode = true; cycleOffset = 0; seed = 777; render();
+  const out = {};
+  settTab('gen');
+  out.tickBoxes = ['D6','D7','S8','S9','S10'].every(x => !!document.getElementById('gpS_' + x));
+  setAll(['weekdays'], ['D6']); generateFortnight();                     // weekday D6 only
+  const cells = sched.sh.flat();
+  out.onlyD6 = cells.every(x => x === 'OFF' || x === 'D6') && cells.includes('D6');
+  out.statusSays = document.getElementById('genStatus').textContent.includes('Weekdays (D6)');
+  setAll(['weekdays','weekends','nights'], ['D7']); generateFortnight(); // D7: weekday + weekend turn, plus nights
+  out.d7Both = sched.sh.some(r => r.slice(0,5).includes('D7')) && [5,6].every(d => sched.sh.filter(r => r[d] === 'D7').length === 2);
+  out.noS = sched.sh.flat().every(x => !['S8','S9','S10'].includes(x));
+  setAll(['weekdays'], ['S8','S9','S10']); generateFortnight();          // the rest
+  out.complete = sched.sh.every((r, i) => wk(r, 0) === (groups[i]==='A'?4:3) && wk(r, 1) === (groups[i]==='A'?3:4))
+    && !genPlan[cycleStartISO(0)];
+  setAll(['weekdays','weekends','nights'], ['D6','D7','S8','S9','S10']);
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {}; manualMode = false; render(); closeSettings();
+  return out;
+});
+console.log('\n--- Settings → Generate (per shift) ---');
+check('a tick box for each day shift', pshift.tickBoxes);
+check('Weekdays + D6 fills only weekday D6', pshift.onlyD6);
+check('status names the partial units', pshift.statusSays);
+check('D7 fills weekday D7 and the weekend turn', pshift.d7Both);
+check('unticked evening shifts stay reserved', pshift.noS);
+check('ticking the rest completes every RN on the split', pshift.complete);
 
 /* ---------------- 2d. locked fortnight: view-only, immune to later changes ---------------- */
 const lock = await page.evaluate(() => {
