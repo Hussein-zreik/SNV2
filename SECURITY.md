@@ -51,11 +51,17 @@ If the Cloud button turns red, re-check that Anonymous sign-in is enabled
 and access to any collection other than `schedules`.
 
 **Does not protect against:** someone who both signs in anonymously *and* knows
-your unit code (`pacu`). Anonymous sign-in is open to anyone by design, so the
-unit code is effectively the shared secret.
+your unit code. Anonymous sign-in is open to anyone by design, so the unit code
+is effectively the shared secret.
 
-**Practical advice:** treat the unit code like a password — don't put it in
-anything public. Prefer something unguessable (`pacu-7f3q-x9`) over `pacu`.
+**Practical advice:** treat the unit code like a password — never write it in
+this repository (it is public), in a screenshot, or in a chat. Use something
+long and unguessable (for example a ward name plus 8 random characters), not a
+short word.
+
+> **If your unit code has ever appeared in this repository's files or history,
+> consider it public and change it now** (steps below). An earlier version of
+> this file named one.
 You can change it any time: open **Cloud**, enter the new code, press
 **Connect** on each device. (Export a backup first — a new code starts a new
 empty document, then your device pushes its current schedule into it.)

@@ -154,6 +154,7 @@ input[type=date]:focus{border-color:var(--border-3)}
 .gp-shifts{display:flex;flex-wrap:wrap;gap:6px 14px;margin:2px 0 4px 22px}
 .gp-shift{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);cursor:pointer}
 .gp-shift .gp-sub{color:var(--muted-2);font-size:var(--fs-xs)}
+.banner[hidden]{display:none}
 .banner.bad{background:var(--hol-bg);border-color:var(--hol-bd);color:var(--hol-fg)}
 /* "whose turn this cycle" info panel */
 .cyc-info{border:1px solid var(--border);border-radius:var(--r-lg);background:var(--panel);margin-bottom:var(--sp-5);overflow:hidden}
@@ -638,6 +639,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 
 <div class="summary-row" id="sumBar"></div>
 
+<div class="banner bad" id="saveWarn" role="alert" hidden><span class="bic">⚠</span><div><b>Changes are not being saved on this device.</b> The browser's storage is full or blocked. Your work is still on screen: open <b>Settings → Roster &amp; data → Export backup</b> now, before closing or reloading this page.</div></div>
 <div class="banner ok" id="banner"></div>
 
 <div class="cyc-info" id="cycInfoSection">
@@ -1160,9 +1162,14 @@ function setNote(id,dateObj,txt){
   if(v){if(!notes[k])notes[k]={};notes[k][id]=v;}
   else if(notes[k]){delete notes[k][id];if(!Object.keys(notes[k]).length)delete notes[k];}
 }
-let history=[];   // change memory: [{t, label, snap}] snap = state BEFORE the change
+// change memory: [{t, label, snap, d?}]. snap is the state BEFORE the change. Only the
+// newest entry holds a full snapshot; every older one is sealed (d:1) into a DELTA —
+// just the fields, and inside date-keyed maps just the keys, its action changed.
+// See "change memory" below.
+let history=[];
 let mRn=null,mDay=null,mSel=null,mEditIdx=null,mStaffId=null,mFlag=false,mNote='';
 const HIST_MAX=100;
+const HIST_BYTES=1500000;   // budget for the undo history in browser storage (characters)
 
 /* ---------- persistence: one registry is the single source of truth ----------
    Every persisted field is declared exactly once in PERSIST, so adding new state
@@ -1176,6 +1183,77 @@ const HIST_MAX=100;
    Fields without apply (ids, roster members) are handled by the finalize block in
    applyStateObject, which is order-sensitive and stays explicit. */
 const clone=x=>x==null?x:JSON.parse(JSON.stringify(x));
+/* ---------- trust boundary: everything loaded is checked before it is used ----------
+   State arrives from localStorage, a backup file or the cloud document — all of
+   which someone else may have written — and its values end up in the page (cell
+   text, CSS classes, inline handlers). sanitizeState() runs on EVERY load path
+   (applyStateObject and undo's restore) and drops whatever is not the expected
+   shape. It checks FORMAT, not membership: a shift code only has to look like
+   one, so a grid that still holds a since-deleted custom shift keeps it. */
+const STAMP_RE=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;   // Date#toISOString
+const ISO_RE=/^\d{4}-\d{2}-\d{2}$/,ID_RE=/^[A-Za-z0-9_-]{1,40}$/,CODE_RE=/^[A-Za-z0-9]{1,4}$/;
+const isObj=x=>!!x&&typeof x==='object'&&!Array.isArray(x);
+const isCode=v=>typeof v==='string'&&CODE_RE.test(v);
+const isNote=v=>typeof v==='string'&&!!v.trim();
+const numOr=(v,d,lo,hi)=>{const n=typeof v==='number'?v:parseFloat(v);return Number.isFinite(n)?Math.max(lo,Math.min(hi,n)):d;};
+// { 'YYYY-MM-DD': { id: value } } keeping only well-formed keys and values passing `ok`
+function cleanDayMap(m,ok,conv){
+  const out={};if(!isObj(m))return out;
+  for(const k in m){if(!ISO_RE.test(k)||!isObj(m[k]))continue;
+    const day={};
+    for(const id in m[k])if(ID_RE.test(id)&&ok(m[k][id]))day[id]=conv?conv(m[k][id]):m[k][id];
+    if(Object.keys(day).length)out[k]=day;}
+  return out;
+}
+const cleanRow=r=>Array.from({length:14},(_,d)=>Array.isArray(r)&&isCode(r[d])?r[d]:'OFF');
+// { cycleMonday: { id: [14 shift codes] } }
+function cleanGridMap(m){
+  const out={};if(!isObj(m))return out;
+  for(const k in m){if(!ISO_RE.test(k)||!isObj(m[k]))continue;
+    const g={};for(const id in m[k])if(ID_RE.test(id))g[id]=cleanRow(m[k][id]);
+    out[k]=g;}
+  return out;
+}
+const cleanStaffList=a=>(Array.isArray(a)?a:[]).filter(x=>isObj(x)&&ID_RE.test(String(x.id)))
+  .map(x=>({id:String(x.id),g:String(x.g),name:String(x.name==null?'':x.name).slice(0,60)}));
+const cleanNotes=m=>cleanDayMap(m,isNote,v=>v.trim().slice(0,300));
+const cleanFlags=m=>cleanDayMap(m,v=>v===true);
+function sanitizeState(){
+  names=(Array.isArray(names)&&names.length?names:['RN 1']).map(n=>String(n).slice(0,120));
+  N=names.length;
+  groups=names.map((_,i)=>groups[i]==='B'?'B':'A');
+  holBal=names.map((_,i)=>numOr(holBal[i],14,0,999));
+  vacBal=names.map((_,i)=>numOr(vacBal[i],21,0,999));
+  ids=(Array.isArray(ids)?ids:[]).slice(0,N).map(v=>ID_RE.test(String(v))?String(v):'');
+  ensureIds();                                   // re-issues anything blanked or duplicated
+  staff=cleanStaffList(staff);
+  staffShifts=cleanDayMap(staffShifts,isCode);
+  overrides=cleanDayMap(overrides,isCode);
+  flags=cleanFlags(flags);notes=cleanNotes(notes);
+  frozen=cleanGridMap(frozen);genPlan=cleanGridMap(genPlan);
+  const byIso=(m,ok)=>{const o={};if(isObj(m))for(const k in m)if(ISO_RE.test(k)&&ok(m[k]))o[k]=m[k];return o;};
+  committedCycles=byIso(committedCycles,v=>v===true);
+  cycleSeeds=byIso(cycleSeeds,v=>typeof v==='number'&&Number.isFinite(v));
+  genDone=byIso(genDone,Array.isArray);
+  for(const k in genDone)genDone[k]=genDone[k].filter(u=>ALL_UNITS.includes(u)||GEN_PARTS.includes(u));
+  const lc={};
+  if(isObj(lockedCycles))for(const k in lockedCycles){const L=lockedCycles[k];
+    if(!ISO_RE.test(k)||!isObj(L)||!Array.isArray(L.rns))continue;
+    lc[k]={at:typeof L.at==='string'&&STAMP_RE.test(L.at)?L.at:'',
+      rns:L.rns.filter(r=>isObj(r)&&ID_RE.test(String(r.id)))
+        .map(r=>({id:String(r.id),name:String(r.name==null?'':r.name).slice(0,120),g:r.g==='B'?'B':'A',row:cleanRow(r.row)})),
+      staff:cleanStaffList(L.staff),staffShifts:cleanDayMap(L.staffShifts,isCode),
+      flags:cleanFlags(L.flags),notes:cleanNotes(L.notes)};}
+  lockedCycles=lc;
+  if(Array.isArray(nightList))nightList=nightList.map(String).filter(id=>ID_RE.test(id));
+  if(Array.isArray(DAILY_MIN))DAILY_MIN=DAILY_MIN.slice(0,7).map(m=>{const o={};
+    if(isObj(m))for(const t in m)if(CODE_RE.test(t)){const v=Math.round(numOr(m[t],0,0,20));if(v>0)o[t]=v;}
+    return o;});
+  defHol=numOr(defHol,14,0,999);defVac=numOr(defVac,21,0,999);
+  const sl={};if(isObj(staffLabels))for(const g of STAFF_GROUPS)if(typeof staffLabels[g.key]==='string')sl[g.key]=staffLabels[g.key].slice(0,40);
+  staffLabels=sl;
+  if(typeof seed!=='number'||!Number.isFinite(seed))seed=Date.now();
+}
 const PERSIST=[
   {k:'names',      sync:1,undo:1,get:()=>names,           apply:applyRoster,                                                                   set:v=>{names=[...v];}},
   {k:'groups',     sync:1,undo:1,get:()=>groups,          /* written by applyRoster */                                                          set:v=>{groups=[...v];}},
@@ -1195,7 +1273,7 @@ const PERSIST=[
   {k:'genDone',    sync:1,undo:1,get:()=>genDone,         apply:s=>{genDone=(s.genDone&&typeof s.genDone==='object')?s.genDone:{};},            set:v=>{genDone=clone(v);}},
   {k:'flags',      sync:1,undo:1,get:()=>flags,           apply:s=>{flags=(s.flags&&typeof s.flags==='object')?s.flags:{};},                    set:v=>{flags=clone(v);}},
   {k:'notes',      sync:1,undo:1,get:()=>notes,           apply:s=>{notes=(s.notes&&typeof s.notes==='object')?s.notes:{};},                    set:v=>{notes=clone(v);}},
-  {k:'startDate',  sync:1,      get:()=>document.getElementById('startDate').value||startDateStr, apply:s=>{if(typeof s.startDate==='string')startDateStr=s.startDate;}},
+  {k:'startDate',  sync:1,      get:()=>document.getElementById('startDate').value||startDateStr, apply:s=>{if(typeof s.startDate==='string'&&ISO_RE.test(s.startDate))startDateStr=s.startDate;}},
   {k:'fatigue',    sync:1,      get:()=>fatigue,          apply:s=>{if(s.fatigue&&typeof s.fatigue==='object')fatigue=s.fatigue; ensureFatigue();}},
   {k:'dailyMin',   sync:1,      get:()=>DAILY_MIN,        apply:s=>{if(Array.isArray(s.dailyMin)&&s.dailyMin.length===7&&s.dailyMin.every(x=>x&&typeof x==='object'))DAILY_MIN=s.dailyMin;}},
   {k:'defHol',     sync:1,      get:()=>defHol,           apply:s=>{if(typeof s.defHol==='number')defHol=s.defHol;}},
@@ -1225,13 +1303,32 @@ function applyRoster(s){
     while(vacBal.length<N)vacBal.push(21);
   }
 }
+let saveFailed=false;        // true while this device could not write its browser storage
 function saveState(){
+  let ok=false;
   try{
     const o={};
-    for(const f of PERSIST)if(f.sync||f.device)o[f.k]=f.get();
-    localStorage.setItem(STORE_KEY,JSON.stringify(o));
-  }catch(e){/* storage unavailable */}
+    for(const f of PERSIST)if((f.sync||f.device)&&f.k!=='history')o[f.k]=f.get();
+    let hist=historyForStorage();
+    for(;;){
+      try{o.history=hist;localStorage.setItem(STORE_KEY,JSON.stringify(o));ok=true;break;}
+      catch(e){                      // storage full: give up the oldest undo steps before the data
+        if(!hist.length)break;
+        hist=hist.slice(Math.ceil(hist.length/2));
+      }
+    }
+    // keep the History window honest: what is listed is what a reload will still have
+    if(ok&&hist.length<history.length)history.splice(0,history.length-hist.length);
+  }catch(e){ok=false;}
+  setSaveFailed(!ok);
   if(typeof cloudSave==='function')cloudSave(); // mirror to the cloud when connected
+}
+// A failed save must never be silent: the work exists only on screen until it is
+// exported. Shows a fixed red warning (and a toast the moment it starts failing).
+function setSaveFailed(v){
+  const changed=v!==saveFailed;saveFailed=v;
+  const el=document.getElementById('saveWarn');if(el)el.hidden=!v;
+  if(changed&&v)toast('⚠ Could not save on this device — export a backup now');
 }
 // apply a saved/synced state object to the app's shared data. history/manualMode
 // are per-device (see cloudStateObj/loadState), so they are not sync fields and
@@ -1241,12 +1338,13 @@ function applyStateObject(s){
   for(const f of PERSIST)if(f.sync&&f.apply)f.apply(s);
   // order-sensitive finalize (must run after the fields above are in place)
   rebuildShifts();                              // custom shift types -> derived tables + CSS
-  ensureStaff();                                // seed defaults / drop invalid staff rows
   syncN();                                      // N follows names.length
   const hadIds=Array.isArray(s.ids)&&s.ids.length>0;
   ids=hadIds?s.ids.slice(0,N).map(String):[];
   ensureIds();
   if(!hadIds)migrateOverridesToIds();           // one-time legacy request migration
+  sanitizeState();                              // trust boundary: drop anything malformed
+  ensureStaff();                                // seed defaults / drop invalid staff rows
   normalizeOrder();
   ensureNightList();                            // seed (all RNs) or prune to valid ids
   ensureDailyMin();                             // seed N7 on states saved before it existed
@@ -1281,7 +1379,10 @@ function loadState(){
     if(!raw)return;
     const s=JSON.parse(raw);
     applyStateObject(s);
-    if(Array.isArray(s.history))history=s.history;                // per-device undo stack
+    if(Array.isArray(s.history)){                                 // per-device undo stack
+      history=s.history.filter(e=>isObj(e)&&isObj(e.snap)).slice(-HIST_MAX);
+      sealStoredHistory();
+    }
     if(s.theme==='light'||s.theme==='dark')theme=s.theme;
     if(typeof s.trackerOpen==='boolean')trackerOpen=s.trackerOpen;
     if(typeof s.cycInfoOpen==='boolean')cycInfoOpen=s.cycInfoOpen;
@@ -1426,16 +1527,75 @@ function snapshot(){
   for(const f of PERSIST)if(f.undo)o[f.k]=clone(f.get());
   return o;
 }
+// Restores a snapshot OR a delta. Only fields the entry actually has are touched, so
+// older entries (taken before a field existed) still load. In a delta, a map field is
+// stored as {$patch:{set,del}}: put the old values back, remove the keys added since.
 function restore(s){
-  // only restore fields the snapshot actually has, so older history entries
-  // (taken before a field existed) still load
-  for(const f of PERSIST)if(f.undo&&(f.k in s))f.set(s[f.k]);
+  for(const f of PERSIST)if(f.undo&&(f.k in s)){
+    const v=s[f.k];
+    if(isObj(v)&&isObj(v.$patch)){
+      const cur=clone(f.get()),o=isObj(cur)?cur:{},pt=v.$patch;
+      if(isObj(pt.set))for(const k in pt.set)o[k]=pt.set[k];
+      if(Array.isArray(pt.del))for(const k of pt.del)delete o[k];
+      f.set(o);
+    }else f.set(v);
+  }
+  sanitizeState();           // history comes from browser storage: same trust boundary
   syncN();ensureIds();ensureStaff();normalizeOrder();ensureNightList();
 }
-// call BEFORE mutating state: pass a snapshot taken before the change + a label
+// What an action changed, as the smallest record that can undo it: `before` is the
+// snapshot taken before it, `after` the state it left (the next action's `before`, or
+// the live state). A one-cell edit on a 5-year roster is then ~1 KB, not the whole
+// roster — 100 full copies is what used to fill the browser's storage.
+function snapDelta(before,after){
+  const out={},js=JSON.stringify;
+  for(const f of PERSIST){
+    if(!f.undo||!(f.k in before))continue;
+    const a=before[f.k],c=after[f.k];
+    if(isObj(a)&&isObj(c)){
+      const set={},del=[];
+      for(const k in a)if(!(k in c)||js(a[k])!==js(c[k]))set[k]=a[k];
+      for(const k in c)if(!(k in a))del.push(k);
+      if(Object.keys(set).length||del.length)out[f.k]={$patch:{set,del}};
+    }else if(js(a)!==js(c))out[f.k]=a;
+  }
+  return out;
+}
+const liveUndoState=()=>{const o={};for(const f of PERSIST)if(f.undo)o[f.k]=f.get();return o;};
+// call with a snapshot taken BEFORE the change + a label (before or after mutating).
+// The previous entry is sealed against that snapshot: it IS the state its action left.
 function pushHistory(label,before){
+  const last=history[history.length-1];
+  if(last&&!last.d){last.snap=snapDelta(last.snap,before);last.d=1;}
   history.push({t:Date.now(),label,snap:before});
   if(history.length>HIST_MAX)history.shift();
+}
+// The entries to write to storage, newest kept first within HIST_BYTES. The newest
+// entry stays a full snapshot in memory (so Undo of the last action is exact even if
+// more of that action is still to run); storage gets a sealed copy of it.
+const histSize=new WeakMap();
+function historyForStorage(){
+  const out=[];let used=0;
+  for(let i=history.length-1;i>=0;i--){
+    let e=history[i];
+    if(!e.d)e={t:e.t,label:e.label,snap:snapDelta(e.snap,liveUndoState()),d:1};
+    let n=histSize.get(e);
+    if(n===undefined){n=JSON.stringify(e).length;if(e===history[i])histSize.set(e,n);}
+    if(out.length&&used+n>HIST_BYTES)break;
+    used+=n;out.unshift(e);
+  }
+  return out;
+}
+// History saved by an older version holds FULL snapshots: seal each against the state
+// its action left (the next entry's snapshot; the live state for the newest).
+function sealStoredHistory(){
+  const live=liveUndoState();
+  for(let i=0;i<history.length;i++){
+    const e=history[i],nx=history[i+1];
+    if(e.d)continue;
+    const after=nx?(nx.d?null:nx.snap):live;
+    if(after){e.snap=snapDelta(e.snap,after);e.d=1;}
+  }
 }
 function undo(){
   if(!history.length){toast('Nothing to undo');return;}
@@ -1551,7 +1711,7 @@ function renderGrid(){
     for(let d=0;d<14;d++){const s=sh[i][d];
       const fl=isFlagged(rid(i),days[d])?' flagged':'';
       const nt=noteFor(rid(i),days[d]);
-      h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} onclick="openCellM(${i},${d})"><span class="sc s-${s}">${s==='OFF'?'Off':s}</span></td>`;}
+      h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} onclick="openCellM(${i},${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;}
     h+=`<td class="sep wk-num ${wc}">${w1}</td><td class="sep wk-num ${wc}">${w2}</td><td class="sep wk-num ${wc}">${tot}</td></tr>`;
   });
 
@@ -1579,7 +1739,7 @@ function renderGrid(){
         if(ENTRY_TYPES.has(s))(d<7?w1++:w2++);
         const fl=isFlagged(p.id,days[d])?' flagged':'';
         const nt=noteFor(p.id,days[d]);
-        h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} onclick="openStaffCellM('${p.id}',${d})"><span class="sc s-${s}">${s==='OFF'?'Off':s}</span></td>`;
+        h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} onclick="openStaffCellM('${p.id}',${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;
       }
       h+=`<td class="sep wk-num">${w1}</td><td class="sep wk-num">${w2}</td><td class="sep wk-num">${w1+w2}</td></tr>`;
     }
@@ -2470,7 +2630,7 @@ function renderRequests(){
   if(cur&&[...rnSel.options].some(o=>o.value===cur))rnSel.value=cur;
   rnSel.onchange=reqRenderDays;
   // type dropdown
-  document.getElementById('reqType').innerHTML=REQ_TYPES.map(t=>`<option value="${t}">${LABELS_M[t]}</option>`).join('');
+  document.getElementById('reqType').innerHTML=REQ_TYPES.map(t=>`<option value="${escapeHtml(t)}">${escapeHtml(LABELS_M[t])}</option>`).join('');
   reqRenderDays();
   // logged requests list (RN overrides + support-staff assignments), all dates, sorted
   const items=[];
@@ -2487,8 +2647,8 @@ function renderRequests(){
       return `<div class="req-row"><span class="rr-rn">${escapeHtml(it.name)}${it.staff?' <span class="rr-tag">staff</span>':''}</span>`+
         `<span class="rr-date">${lbl}</span>`+
         (()=>{const w=(notes[it.k]&&notes[it.k][it.id])||'';return w?`<span class="rr-why" title="${escapeHtml(w)}">${escapeHtml(w)}</span>`:'';})()+
-        `<span class="rr-badge b-${it.t}">${it.t==='REQ'?'Req off':it.t}</span>`+
-        `<button class="rr-del" title="Delete this request" onclick="reqDelete('${it.k}','${it.id}')">✕</button></div>`;
+        `<span class="rr-badge b-${escapeHtml(it.t)}">${it.t==='REQ'?'Req off':escapeHtml(it.t)}</span>`+
+        `<button class="rr-del" title="Delete this request" onclick="reqDelete('${escapeHtml(it.k)}','${escapeHtml(it.id)}')">✕</button></div>`;
     }).join('');
   }
 }
@@ -2836,8 +2996,8 @@ function toggleFlagBtn(){mFlag=!mFlag;updateFlagBtn();}
 // grouped shift buttons for the cell/staff picker — shares one builder
 function shiftOptionsHTML(){
   return SHIFT_GROUPS.map(g=>
-    `<div class="mgroup"><div class="mgroup-lbl">${g.label}</div><div class="mgrid">`+
-    g.types.map(s=>`<button class="mbtn${mSel===s?' sel':''}" data-s="${s}" onclick="pickSh('${s}')">${LABELS_M[s]}</button>`).join('')+
+    `<div class="mgroup"><div class="mgroup-lbl">${escapeHtml(g.label)}</div><div class="mgrid">`+
+    g.types.map(s=>`<button class="mbtn${mSel===s?' sel':''}" data-s="${escapeHtml(s)}" onclick="pickSh('${escapeHtml(s)}')">${escapeHtml(LABELS_M[s])}</button>`).join('')+
     `</div></div>`).join('');
 }
 function pickSh(s){mSel=s;document.querySelectorAll('#mOpts .mbtn').forEach(b=>b.classList.toggle('sel',b.dataset.s===s));}

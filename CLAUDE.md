@@ -15,11 +15,12 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
 npm run test:unit      # 53 engine unit tests in plain Node, ~0.5s
-npm test               # full rule audit driving the app in headless Chromium, ~30s
+npm test               # 112 checks driving the app in headless Chromium, ~40s
 ```
 
 Run all three before committing; CI (`.github/workflows/test.yml`) runs exactly these on
-push to `main` and on PRs.
+push to `main` and on PRs, after `npm ci` — `package-lock.json` is committed, so update it
+(`npm install`) in the same commit as any `package.json` change.
 
 There is no test-name filter. To run one case, comment out the others in
 `test/engine.test.mjs`, or write a throwaway script that imports `engine.js` directly —
@@ -88,6 +89,26 @@ It drives `saveState`, `cloudStateObj`, `applyStateObject`, `snapshot` and `rest
 once. **Adding new persisted state means adding one row here — nothing else.** Forgetting
 it means the field silently fails to sync or to undo; the audit's registry round-trip
 section catches that.
+
+**Loaded state is untrusted.** localStorage, a backup file and the cloud document can all
+have been written by someone else, and state values reach the page (cell text, CSS
+classes, inline `onclick` strings). `sanitizeState()` is the one boundary: it runs at the
+end of `applyStateObject()` and of `restore()` and drops anything that is not the expected
+shape (ISO date keys, `ID_RE` ids, `CODE_RE` shift codes, numeric balances and minimums).
+It checks format, not membership, so a grid holding a since-deleted custom shift keeps it.
+A new persisted field needs its row in `PERSIST` **and** its shape in `sanitizeState()`;
+anything interpolated into HTML still goes through `escapeHtml()`. The audit's "loaded
+data cannot inject" section feeds hostile values through every field.
+
+**Undo history is stored as deltas.** `history` entries are `{t,label,snap,d?}`. Only the
+newest holds a full `snapshot()`; `pushHistory()` seals the previous one (`d:1`) into
+`snapDelta()` — just the fields, and inside date-keyed maps just the keys, that action
+changed (`{$patch:{set,del}}`), which `restore()` applies. 100 full copies used to fill
+the browser's ~5 MB storage after ~8 months, and saves then failed silently. So: take the
+snapshot **before** mutating, call `pushHistory` once per action, and end the action with
+`saveState()`. `saveState()` keeps history within `HIST_BYTES`, drops the oldest undo
+steps first if storage is full, and shows the `#saveWarn` banner if a save still fails —
+never swallow a storage error.
 
 ### 2. `overrides` are locks; `frozen` is a baked grid
 

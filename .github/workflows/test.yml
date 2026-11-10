@@ -14,8 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install dependencies
-        run: npm install
+      - name: Install dependencies (exact versions from package-lock.json)
+        run: npm ci
       - name: Lint (bug-catching rules)
         run: npm run lint
       - name: Engine unit tests (fast, no browser)

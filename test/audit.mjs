@@ -519,6 +519,142 @@ check('the Reason box saves that day\'s comment', rreport.reasonIsComment);
 check('the Reason box clears after adding', rreport.boxCleared);
 check('a locked fortnight\'s report uses the locked names', rreport.lockedName);
 
+/* ---------------- 2f. undo history: compact, exact, and never a silent failed save ---------------- */
+const hist = await page.evaluate(() => {
+  const out = {};
+  const state = () => JSON.stringify(snapshot());
+  const reset = () => { overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {}; lockedCycles = {};
+    flags = {}; notes = {}; staffShifts = {}; history = []; manualMode = false; cycleOffset = 0; seed = 5150; render(); saveState(); };
+  window.__c = window.confirm; window.confirm = () => true;
+  const edit = (i, d, v) => { openCellM(i, d); mSel = v; saveCell(); };
+
+  // (a) a varied run of actions, then undo all the way back — every step must match exactly
+  reset();
+  const steps = [state()];
+  const acts = [
+    () => edit(3, 2, 'D6'), () => edit(3, 2, 'OFF'), () => { setMode(true); generateFortnight(); },
+    () => edit(5, 4, 'S9'), () => toggleCycleLock(), () => toggleCycleLock(),
+    () => { openRequests(); document.getElementById('reqRn').value = String(order[2]); document.getElementById('reqType').value = 'VAC';
+            reqSelDays = new Set([8, 9]); document.getElementById('reqReason').value = 'why'; reqAdd(); closeRequests(); },
+    () => setHolBal(1, 9), () => moveInOrder(0, 4), () => removeRN(order[order.length - 1]),
+    () => { cycleOffset = 1; render(); generateFortnight(); }, () => clearCycle()
+  ];
+  for (const a of acts) { a(); steps.push(state()); }
+  out.recorded = history.length === acts.length;
+  out.sealed = history.slice(0, -1).every(e => e.d === 1) && !history[history.length - 1].d;
+  // half-way through, drop memory and reload from storage, as closing the tab would
+  let exact = true;
+  for (let k = acts.length - 1; k >= 0; k--) {
+    if (k === 6) { saveState(); history = []; loadState(); render(); }
+    undo(); if (state() !== steps[k]) { exact = false; out.firstMismatch = k; break; }
+  }
+  out.undoExact = exact;
+
+  // (b) size: 30 fortnights x 10 actions used to stop saving at fortnight 18
+  reset(); setMode(true);
+  let failed = false; const realSet = Storage.prototype.setItem;
+  Storage.prototype.setItem = function (k, v) { try { return realSet.call(this, k, v); } catch (e) { failed = true; throw e; } };
+  for (let n = 1; n <= 30; n++) { cycleOffset = n; render(); generateFortnight();
+    for (let q = 0; q < 8; q++) edit(q, (q * 3) % 14, q % 2 ? 'D6' : 'OFF');
+    toggleCycleLock(); }
+  Storage.prototype.setItem = realSet;
+  const raw = localStorage.getItem(STORE_KEY), saved = JSON.parse(raw);
+  out.noFailedSave = !failed && !saveFailed;
+  out.storageKb = Math.round(raw.length / 1024);
+  out.historyKb = Math.round(JSON.stringify(saved.history).length / 1024);
+  out.allThirtySaved = Object.keys(saved.lockedCycles).length === 30;
+  out.historyKept = saved.history.length;
+
+  // (c) history written by the previous version (full snapshots) is converted and still undoes exactly
+  reset();
+  const s0 = state(); const b1 = snapshot(); edit(2, 1, 'D7'); const s1 = state(); const b2 = snapshot(); edit(4, 3, 'S8');
+  const old = JSON.parse(localStorage.getItem(STORE_KEY));
+  old.history = [{ t: 1, label: 'old 1', snap: b1 }, { t: 2, label: 'old 2', snap: b2 }];      // old format: no deltas
+  localStorage.setItem(STORE_KEY, JSON.stringify(old));
+  history = []; loadState(); render();
+  out.legacyConverted = history.length === 2 && history.every(e => e.d === 1);
+  undo(); const m1 = state() === s1; undo(); out.legacyUndoExact = m1 && state() === s0;
+
+  // (d) a failed save is shown, and clears once saving works again
+  reset();
+  Storage.prototype.setItem = function () { throw new DOMException('full', 'QuotaExceededError'); };
+  edit(1, 1, 'D6');
+  out.warnShown = saveFailed === true && document.getElementById('saveWarn').hidden === false;
+  Storage.prototype.setItem = realSet;
+  edit(1, 1, 'OFF');
+  out.warnClears = saveFailed === false && document.getElementById('saveWarn').hidden === true;
+
+  // (e) nearly-full storage: the oldest undo steps go first, the data is still saved
+  reset(); for (let q = 0; q < 12; q++) edit(q, 5, 'D6');
+  const need = JSON.stringify(Object.assign(JSON.parse(localStorage.getItem(STORE_KEY)), { history: [] })).length;
+  Storage.prototype.setItem = function (k, v) { if (k === STORE_KEY && v.length > need + 1200) throw new DOMException('full', 'QuotaExceededError'); return realSet.call(this, k, v); };
+  edit(0, 6, 'S9');
+  Storage.prototype.setItem = realSet;
+  const kept = JSON.parse(localStorage.getItem(STORE_KEY));
+  out.trimsHistoryFirst = !saveFailed && kept.history.length < 13 && kept.overrides[isoKey(sched.days[6])][rid(0)] === 'S9' && history.length === kept.history.length;
+
+  window.confirm = window.__c; reset();
+  return out;
+});
+console.log('\n--- undo history & saving ---');
+check('every action is recorded; older entries are stored as deltas', hist.recorded && hist.sealed);
+check('undo is exact through 12 mixed actions and a reload', hist.undoExact, 'first mismatch at step ' + hist.firstMismatch);
+check('30 fortnights x 10 actions: no failed save', hist.noFailedSave);
+check('30 fortnights x 10 actions: all 30 on disk', hist.allThirtySaved);
+check('storage stays small (history < 1.6 MB, total < 2.5 MB)', hist.historyKb < 1600 && hist.storageKb < 2500, `history ${hist.historyKb} KB, total ${hist.storageKb} KB, ${hist.historyKept} entries`);
+check('history from the previous version is converted', hist.legacyConverted);
+check('converted history still undoes exactly', hist.legacyUndoExact);
+check('a failed save shows the red warning', hist.warnShown);
+check('the warning clears when saving works again', hist.warnClears);
+check('nearly-full storage: oldest undo steps dropped, data saved', hist.trimsHistoryFirst);
+
+/* ---------------- 2g. trust boundary: loaded data cannot inject into the page ---------------- */
+const inj = await page.evaluate(() => {
+  const out = {};
+  overrides = {}; frozen = {}; committedCycles = {}; lockedCycles = {}; genPlan = {}; genDone = {}; manualMode = false; cycleOffset = 0; render();
+  // a normal state must pass through the boundary unchanged
+  const d = sched.days, k0 = isoKey(d[0]);
+  overrides = { [k0]: { [rid(0)]: 'VAC' } }; notes = { [k0]: { [rid(0)]: 'a note' } }; flags = { [k0]: { [rid(1)]: true } };
+  setMode(true); generateFortnight(); toggleCycleLock(); setMode(false);
+  const good = JSON.stringify(cloudStateObj());
+  applyStateObject(JSON.parse(good)); render();
+  out.cleanStateUnchanged = JSON.stringify(cloudStateObj()) === good;
+  lockedCycles = {}; frozen = {}; committedCycles = {}; genDone = {}; overrides = {}; notes = {}; flags = {}; render();
+
+  // every field an attacker could reach through the cloud document or a backup file
+  const X = t => `<img src=x onerror="window.__inj_${t}=1">`, Q = t => `a',0);window.__inj_${t}=1;('`;
+  const bad = JSON.parse(JSON.stringify(cloudStateObj()));
+  bad.overrides = { [k0]: { [rid(0)]: X('cell') }, [Q('date')]: { [rid(1)]: 'D6' }, [isoKey(d[1])]: { [Q('oid')]: 'D6' } };
+  bad.staff = [{ id: Q('staff'), g: bad.staff[0].g, name: 'x' }, bad.staff[1]];
+  bad.staffShifts = { [k0]: { [bad.staff[1].id]: X('staffcell') } };
+  bad.ids = bad.ids.slice(); bad.ids[2] = Q('rnid'); bad.nightList = bad.ids.slice();
+  bad.holBal = bad.holBal.slice(); bad.holBal[0] = '"><img src=x onerror="window.__inj_bal=1">';
+  bad.dailyMin = JSON.parse(JSON.stringify(bad.dailyMin)); bad.dailyMin[0].D6 = '"><img src=x onerror="window.__inj_min=1">';
+  bad.customShifts = [{ code: 'E10', label: '<svg onload=window.__inj_lbl=1>', color: '#123456' }];
+  bad.frozen = { [isoKey(d[0])]: { [rid(3)]: Array(14).fill(X('frozen')) } };
+  bad.lockedCycles = { '2031-01-06': { at: X('at'), rns: [{ id: Q('lid'), name: 'n', g: 'A', row: [X('lrow')] }] } };
+  bad.startDate = X('date');
+  applyStateObject(bad); render();
+  openSettings(); for (const t of ['groups', 'night', 'min', 'shifts', 'staff', 'gen', 'data']) settTab(t); closeSettings();
+  openRequests(); closeRequests(); openCellM(0, 1); closeCell();
+  for (const el of document.querySelectorAll('#tbl td.sh-cell,#settModal button,#reqList button')) { const oc = el.getAttribute('onclick') || ''; if (oc.includes('__inj_')) { try { el.click(); } catch (e) {} } }
+  out.noInjectedElements = !document.querySelector('#tbl img, #settModal img, #settModal svg[onload], #reqModal img, #cellModal svg[onload]');
+  out.handlersClean = ![...document.querySelectorAll('[onclick],[onchange]')].some(el => /__inj_/.test(el.getAttribute('onclick') || '') || /__inj_/.test(el.getAttribute('onchange') || ''));
+  out.badValuesDropped = !JSON.stringify(cloudStateObj()).includes('__inj_');   // (the shift label is cut to 24 chars and only ever shown escaped)
+  out.labelShownAsText = customShifts.length === 1;       // the label is kept, but only ever rendered escaped
+  customShifts = []; rebuildShifts(); lockedCycles = {}; frozen = {}; overrides = {}; staffShifts = {}; nightList = null;
+  return out;
+});
+await page.waitForTimeout(250);
+inj.nothingRan = await page.evaluate(() => Object.keys(window).filter(k => k.startsWith('__inj_')).length === 0);
+await page.evaluate(() => { holBal = holBal.map(() => 14); ensureStaff(); render(); saveState(); });
+console.log('\n--- loaded data cannot inject into the page ---');
+check('a normal state passes the boundary unchanged', inj.cleanStateUnchanged);
+check('malformed values are dropped on load', inj.badValuesDropped);
+check('no injected element reaches the page', inj.noInjectedElements);
+check('no injected text reaches an inline handler', inj.handlersClean);
+check('no injected script ran', inj.nothingRan);
+
 /* ---------------- 3. stable ids: requests follow the nurse ---------------- */
 const idTest = await page.evaluate(() => {
   const days = computeSchedule(0).days;
@@ -567,6 +703,7 @@ const reg2 = await page.evaluate(() => {
   // serialize -> wipe -> applyStateObject. Anything the read side forgot to load
   // fails to come back. This is exactly the class of bug the registry prevents.
   const days = computeSchedule(0).days;
+  const PK = '2031-01-06';                       // a far-future fortnight key for the probes
   flags = { [isoKey(days[1])]: { [rid(2)]: true } };
   defHol = 9; defVac = 27;
   DAILY_MIN[0].D6 = 5;
@@ -574,8 +711,8 @@ const reg2 = await page.evaluate(() => {
   staffLabels = { AIDE: 'Probe Aids' };
   overrides = { [isoKey(days[2])]: { [rid(3)]: 'VAC' } };
   genParts = { weekdays: true, weekends: false, nights: false };
-  genDone = { probe: ['weekdays'] }; genPlan = { probe: { [rid(0)]: Array(14).fill('D6') } };
-  lockedCycles = { probe: { at: 'x', rns: [{ id: rid(0), name: 'Probe', g: 'A', row: Array(14).fill('N7') }] } };
+  genDone = { [PK]: ['weekdays'] }; genPlan = { [PK]: { [rid(0)]: Array(14).fill('D6') } };
+  lockedCycles = { [PK]: { at: '2031-01-06T08:00:00.000Z', rns: [{ id: rid(0), name: 'Probe', g: 'A', row: Array(14).fill('N7') }] } };
   const before = customShifts.length;
   const saved = JSON.parse(JSON.stringify(cloudStateObj()));
   // wipe every one
@@ -592,9 +729,9 @@ const reg2 = await page.evaluate(() => {
     overrides: sched.sh[3][2] === 'VAC',
     customShifts: customShifts.length === before,
     genParts: genParts.weekends === false && genParts.weekdays === true,
-    genDone: !!(genDone.probe && genDone.probe[0] === 'weekdays'),
-    genPlan: !!(genPlan.probe && genPlan.probe[rid(0)][3] === 'D6'),
-    lockedCycles: !!(lockedCycles.probe && lockedCycles.probe.rns[0].name === 'Probe')
+    genDone: !!(genDone[PK] && genDone[PK][0] === 'weekdays'),
+    genPlan: !!(genPlan[PK] && genPlan[PK][rid(0)][3] === 'D6'),
+    lockedCycles: !!(lockedCycles[PK] && lockedCycles[PK].rns[0].name === 'Probe')
   };
 
   // undo round-trip: snapshot -> mutate -> restore reverts every undo field
