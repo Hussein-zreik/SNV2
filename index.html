@@ -2,13 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- What this page may load and talk to (audit H5). Every script is served from this
-     site: the libraries are in vendor/, not fetched from a CDN. The page may talk only
-     to Google's API servers (Firebase sign-in and the roster), so a script that got
-     onto the page could not send the roster anywhere else. 'unsafe-inline' has to stay
-     while the buttons use inline onclick handlers; apis.google.com and the
-     firebaseapp.com frame are what Firebase sign-in loads on phones. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<!-- What this page may load and talk to (audit H5, H3). Every script is served from
+     this site: the libraries are in vendor/, not fetched from a CDN, and the one inline
+     script below is allowed by its checksum — no other inline code can run, and the
+     buttons carry none (data-on-* attributes, see "buttons without inline code").
+     After editing that script run `node test/vendor.test.mjs --write`, or the page
+     stops working (the test says so). The page may talk only to Google's API servers
+     (Firebase sign-in and the roster), so a script that got onto the page could not
+     send the roster anywhere else. apis.google.com and the firebaseapp.com frame are
+     what Firebase sign-in loads on phones. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-2FBZe78M7fknPKfPaPR/HiS0NTajAbr5oZUwguJvHAo=' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RN Rotating Schedule</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -564,8 +567,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <input class="ninput" id="pw1" type="password" placeholder="Password" autocomplete="current-password" aria-label="Password">
     <label class="lock-keep"><input type="checkbox" id="lockKeep"> Keep me signed in on this device<span>Tick only on a device that is yours. It also lets the app open when the internet is down.</span></label>
     <div class="lock-err" id="lockErr" role="alert"></div>
-    <button class="btn accent" id="lockGo" style="width:100%;justify-content:center" onclick="lockSubmit()">Sign in</button>
-    <div class="lock-links"><a role="button" tabindex="0" onclick="lockForgot()" onkeydown="if(event.key==='Enter')lockForgot()">Forgot password?</a></div>
+    <button class="btn accent" id="lockGo" style="width:100%;justify-content:center" data-on-click="lockSubmit()">Sign in</button>
+    <div class="lock-links"><a role="button" tabindex="0" data-on-click="lockForgot()" data-on-keydown="lockForgotKey(event)">Forgot password?</a></div>
   </div>
 </div>
 <div class="app" id="appRoot">
@@ -581,74 +584,74 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <span class="ctrl-label">Cycle 0</span>
       <input type="date" id="startDate" aria-label="Cycle 0 anchor date (Monday)" title="Anchor: the Monday that cycle 0 starts on. The view auto-advances from here as time passes.">
       <span class="cyclenav">
-        <button class="btn icon-only" onclick="prev()" aria-label="Previous cycle" title="Previous cycle">
+        <button class="btn icon-only" data-on-click="prev()" aria-label="Previous cycle" title="Previous cycle">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
         </button>
         <span class="week-pill" id="weekLabel">—</span>
-        <button class="btn icon-only" onclick="next()" aria-label="Next cycle" title="Next cycle">
+        <button class="btn icon-only" data-on-click="next()" aria-label="Next cycle" title="Next cycle">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
         </button>
-        <button class="btn icon-only" onclick="goToday()" aria-label="Jump to current cycle" title="Jump to the current cycle (today)">
+        <button class="btn icon-only" data-on-click="goToday()" aria-label="Jump to current cycle" title="Jump to the current cycle (today)">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 12l0-5M12 12l3.5 2"/></svg>
         </button>
       </span>
       <span class="divider"></span>
       <div class="segmented" id="modeSeg" role="group" aria-label="Schedule mode">
-        <button class="seg" id="segAuto" onclick="setMode(false)" aria-pressed="true" title="Auto: every fortnight is always filled automatically">Auto</button>
-        <button class="seg" id="segManual" onclick="setMode(true)" aria-pressed="false" title="Manual: fortnights start empty; add requests, then Generate">Manual</button>
+        <button class="seg" id="segAuto" data-on-click="setMode(false)" aria-pressed="true" title="Auto: every fortnight is always filled automatically">Auto</button>
+        <button class="seg" id="segManual" data-on-click="setMode(true)" aria-pressed="false" title="Manual: fortnights start empty; add requests, then Generate">Manual</button>
       </div>
-      <button class="btn primary" id="regenBtn" onclick="regen()" title="Generate a new random schedule">
+      <button class="btn primary" id="regenBtn" data-on-click="regen()" title="Generate a new random schedule">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 5v6h-6"/></svg>Regenerate
       </button>
-      <button class="btn primary" id="genBtn" onclick="generateFortnight()" style="display:none" title="Fill this empty fortnight, respecting the rules, turns and requests">
+      <button class="btn primary" id="genBtn" data-on-click="generateFortnight()" style="display:none" title="Fill this empty fortnight, respecting the rules, turns and requests">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg><span id="genLbl">Generate</span>
       </button>
-      <button class="btn" id="clearFnBtn" onclick="clearCycle()" style="display:none" title="Delete everything in this fortnight">
+      <button class="btn" id="clearFnBtn" data-on-click="clearCycle()" style="display:none" title="Delete everything in this fortnight">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>Clear
       </button>
-      <button class="btn" id="lockBtn" onclick="toggleCycleLock()" aria-pressed="false" title="Lock this fortnight">
+      <button class="btn" id="lockBtn" data-on-click="toggleCycleLock()" aria-pressed="false" title="Lock this fortnight">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="lockLbl">Lock</span>
       </button>
       <span class="divider"></span>
-      <button class="btn" id="undoBtn" onclick="undo()" title="Undo the last change (Ctrl+Z)">
+      <button class="btn" id="undoBtn" data-on-click="undo()" title="Undo the last change (Ctrl+Z)">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-1"/></svg><span class="btxt">Undo</span>
       </button>
     </div>
     <!-- row 2: tools, exports and system -->
     <div class="toolrow secondary">
-      <button class="btn ghost" onclick="openSettings()" title="Group lists and turn order">
+      <button class="btn ghost" data-on-click="openSettings()" title="Group lists and turn order">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H7a1.7 1.7 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V7a1.7 1.7 0 0 0 1.5 1H23a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="btxt">Settings</span>
       </button>
-      <button class="btn ghost" onclick="openRequests()" title="Enter requested duties, offs and vacations — the schedule adapts around them">
+      <button class="btn ghost" data-on-click="openRequests()" title="Enter requested duties, offs and vacations — the schedule adapts around them">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="btxt">Requests</span>
       </button>
-      <button class="btn ghost" id="sreqBtn" onclick="openStaffReq()" title="Requests staff sent through the request link — a reference list">
+      <button class="btn ghost" id="sreqBtn" data-on-click="openStaffReq()" title="Requests staff sent through the request link — a reference list">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="btxt">Staff requests</span><span class="sreq-badge" id="sreqBadge" hidden></span>
       </button>
-      <button class="btn ghost" onclick="openReport()" title="Generate a monthly duty report">
+      <button class="btn ghost" data-on-click="openReport()" title="Generate a monthly duty report">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg><span class="btxt">Report</span>
       </button>
-      <button class="btn ghost" onclick="openFairness()" title="Fairness dashboard — nights, weekends & holidays per nurse">
+      <button class="btn ghost" data-on-click="openFairness()" title="Fairness dashboard — nights, weekends & holidays per nurse">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M5 21h14"/><path d="M12 5L5 8M12 5l7 3"/><path d="M5 8l-2.5 5a2.5 2.5 0 0 0 5 0zM19 8l-2.5 5a2.5 2.5 0 0 0 5 0z"/></svg><span class="btxt">Fairness</span>
       </button>
-      <button class="btn ghost" onclick="openHistory()" title="View change history">
+      <button class="btn ghost" data-on-click="openHistory()" title="View change history">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v6h6M3 9a9 9 0 1 1 2 6"/><path d="M12 7v5l3 2"/></svg><span class="btxt">History</span>
       </button>
       <span class="divider"></span>
-      <button class="btn ghost" onclick="exportPDF()" title="Export / print as PDF">
+      <button class="btn ghost" data-on-click="exportPDF()" title="Export / print as PDF">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg><span class="btxt">PDF</span>
       </button>
-      <button class="btn ghost" onclick="exportExcel()" title="Export as Excel spreadsheet">
+      <button class="btn ghost" data-on-click="exportExcel()" title="Export as Excel spreadsheet">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M9 4v16"/></svg><span class="btxt">Excel</span>
       </button>
       <span class="divider"></span>
-      <button class="btn ghost" id="cloudBtn" onclick="openCloud()" title="Cloud sync across devices">
+      <button class="btn ghost" id="cloudBtn" data-on-click="openCloud()" title="Cloud sync across devices">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 18 18z"/></svg><span class="btxt">Cloud</span>
       </button>
-      <button class="btn ghost icon-only" onclick="lockApp()" aria-label="Sign out and lock the app" title="Sign out and lock the app">
+      <button class="btn ghost icon-only" data-on-click="lockApp()" aria-label="Sign out and lock the app" title="Sign out and lock the app">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
       </button>
-      <button class="btn ghost" id="themeBtn" onclick="toggleTheme()" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
+      <button class="btn ghost" id="themeBtn" data-on-click="toggleTheme()" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
     </div>
   </div>
 </div>
@@ -675,12 +678,12 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 <div class="summary-row" id="sumBar"></div>
 
 <div class="banner bad" id="saveWarn" role="alert" hidden><span class="bic">⚠</span><div><b>Changes are not being saved on this device.</b> The browser's storage is full or blocked. Your work is still on screen: open <b>Settings → Roster &amp; data → Export backup</b> now, before closing or reloading this page.</div></div>
-<div class="banner bad" id="errNote" role="alert" hidden><span class="bic">⚠</span><div id="errNoteBody" style="flex:1"></div><button class="btn sm" onclick="dismissProblems()">Dismiss</button></div>
-<div class="banner warn" id="syncNote" role="status" hidden><span class="bic">⇄</span><div id="syncNoteBody" style="flex:1"></div><button class="btn sm" onclick="dismissSyncNote()">Dismiss</button></div>
+<div class="banner bad" id="errNote" role="alert" hidden><span class="bic">⚠</span><div id="errNoteBody" style="flex:1"></div><button class="btn sm" data-on-click="dismissProblems()">Dismiss</button></div>
+<div class="banner warn" id="syncNote" role="status" hidden><span class="bic">⇄</span><div id="syncNoteBody" style="flex:1"></div><button class="btn sm" data-on-click="dismissSyncNote()">Dismiss</button></div>
 <div class="banner ok" id="banner"></div>
 
 <div class="cyc-info" id="cycInfoSection">
-  <button class="cyc-head" id="cycInfoToggle" onclick="toggleCycInfo()" aria-expanded="true" aria-controls="cycInfoBody" title="Show or hide whose turn it is">
+  <button class="cyc-head" id="cycInfoToggle" data-on-click="toggleCycInfo()" aria-expanded="true" aria-controls="cycInfoBody" title="Show or hide whose turn it is">
     <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/></svg>
     Whose turn this cycle
     <span class="cyc-hint" id="cycInfoHint"></span>
@@ -691,8 +694,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 
 <div class="roster-ctl">
   <span>Roster: <b id="rnCount">19</b> RNs</span>
-  <button class="btn sm" onclick="addRN('A')" title="Add an RN to Group A"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/></svg>Group A</button>
-  <button class="btn sm" onclick="addRN('B')" title="Add an RN to Group B"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/></svg>Group B</button>
+  <button class="btn sm" data-on-click="addRN('A')" title="Add an RN to Group A"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/></svg>Group A</button>
+  <button class="btn sm" data-on-click="addRN('B')" title="Add an RN to Group B"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/></svg>Group B</button>
   <span class="roster-hint">Drag the ⠿ handle to reorder a row (RN keeps their duties). Click a name to rename, move, or delete.</span>
 </div>
 
@@ -701,7 +704,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 </div>
 
 <div class="tracker-section" id="trackerSection">
-  <button class="tracker-title" id="trackerToggle" onclick="toggleTracker()" aria-expanded="true" aria-controls="trackerBody" title="Show or hide the balances table">
+  <button class="tracker-title" id="trackerToggle" data-on-click="toggleTracker()" aria-expanded="true" aria-controls="trackerBody" title="Show or hide the balances table">
     <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
     Leave balances
     <span class="tracker-count" id="trackerCount"></span>
@@ -717,15 +720,15 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="report-head">
       <h3 style="margin:0">Monthly duty report</h3>
       <div class="report-nav">
-        <button class="btn icon-only" onclick="reportMonth(-1)" title="Previous month" aria-label="Previous month"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button class="btn icon-only" data-on-click="reportMonth(-1)" title="Previous month" aria-label="Previous month"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
         <span id="reportMonthLabel" class="report-month">—</span>
-        <button class="btn icon-only" onclick="reportMonth(1)" title="Next month" aria-label="Next month"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="btn icon-only" data-on-click="reportMonth(1)" title="Next month" aria-label="Next month"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
       </div>
     </div>
     <div class="report-body" id="reportBody"></div>
     <div class="mactions" style="margin-top:1rem">
-      <button class="btn" onclick="downloadReportPDF()" title="Download this report as PDF">Download PDF</button>
-      <button class="btn accent" onclick="closeReport()">Close</button>
+      <button class="btn" data-on-click="downloadReportPDF()" title="Download this report as PDF">Download PDF</button>
+      <button class="btn accent" data-on-click="closeReport()">Close</button>
     </div>
   </div>
 </div>
@@ -734,15 +737,15 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="report-head">
       <h3 style="margin:0">Fairness dashboard</h3>
       <div class="fair-range">
-        <label class="fair-lbl">From <input type="date" id="fairStart" class="fair-date" onchange="fairApplyRange('start')"></label>
-        <label class="fair-lbl">To <input type="date" id="fairEnd" class="fair-date" onchange="fairApplyRange('end')"></label>
+        <label class="fair-lbl">From <input type="date" id="fairStart" class="fair-date" data-on-change="fairApplyRange('start')"></label>
+        <label class="fair-lbl">To <input type="date" id="fairEnd" class="fair-date" data-on-change="fairApplyRange('end')"></label>
       </div>
     </div>
     <div class="fair-presets">
-      <button class="btn" onclick="fairPreset('month')">This month</button>
-      <button class="btn" onclick="fairPreset('year')">This year</button>
-      <button class="btn" onclick="fairPreset('n3')">Next 3 months</button>
-      <button class="btn" onclick="fairPreset('n6')">Next 6 months</button>
+      <button class="btn" data-on-click="fairPreset('month')">This month</button>
+      <button class="btn" data-on-click="fairPreset('year')">This year</button>
+      <button class="btn" data-on-click="fairPreset('n3')">Next 3 months</button>
+      <button class="btn" data-on-click="fairPreset('n6')">Next 6 months</button>
       <span id="fairRangeInfo" class="fair-range-info">—</span>
     </div>
     <div id="fairSummary"></div>
@@ -753,8 +756,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       Nights are compared <b>within each group</b> (the rotation is group-based); weekend days across the whole roster. Holidays &amp; vacations reflect what's been entered.
     </div>
     <div class="mactions" style="margin-top:1rem">
-      <button class="btn" onclick="downloadFairnessPDF()" title="Download this dashboard as PDF">Download PDF</button>
-      <button class="btn accent" onclick="closeFairness()">Close</button>
+      <button class="btn" data-on-click="downloadFairnessPDF()" title="Download this dashboard as PDF">Download PDF</button>
+      <button class="btn accent" data-on-click="closeFairness()">Close</button>
     </div>
   </div>
 </div>
@@ -765,14 +768,14 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <span class="sett-cyc" id="settCyc">—</span>
     </div>
     <div class="sett-tabs" role="tablist">
-      <button class="sett-tab" data-tab="groups" onclick="settTab('groups')">Groups &amp; turn</button>
-      <button class="sett-tab" data-tab="night"  onclick="settTab('night')">Night cycle</button>
-      <button class="sett-tab" data-tab="min"    onclick="settTab('min')">Staffing minimums</button>
-      <button class="sett-tab" data-tab="shifts" onclick="settTab('shifts')">Shifts</button>
-      <button class="sett-tab" data-tab="staff"  onclick="settTab('staff')">Support staff</button>
-      <button class="sett-tab" data-tab="gen"    onclick="settTab('gen')">Generate</button>
-      <button class="sett-tab" data-tab="rules"  onclick="settTab('rules')">Fatigue rules</button>
-      <button class="sett-tab" data-tab="data"   onclick="settTab('data')">Roster &amp; data</button>
+      <button class="sett-tab" data-tab="groups" data-on-click="settTab('groups')">Groups &amp; turn</button>
+      <button class="sett-tab" data-tab="night"  data-on-click="settTab('night')">Night cycle</button>
+      <button class="sett-tab" data-tab="min"    data-on-click="settTab('min')">Staffing minimums</button>
+      <button class="sett-tab" data-tab="shifts" data-on-click="settTab('shifts')">Shifts</button>
+      <button class="sett-tab" data-tab="staff"  data-on-click="settTab('staff')">Support staff</button>
+      <button class="sett-tab" data-tab="gen"    data-on-click="settTab('gen')">Generate</button>
+      <button class="sett-tab" data-tab="rules"  data-on-click="settTab('rules')">Fatigue rules</button>
+      <button class="sett-tab" data-tab="data"   data-on-click="settTab('data')">Roster &amp; data</button>
     </div>
 
     <div class="sett-panel" id="settPanel-groups">
@@ -780,8 +783,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <div class="sett-swaphint" id="settSwapHint"></div>
       <div class="sett-grid" id="settBody"></div>
       <div class="mactions" style="margin-top:var(--sp-3)">
-        <button class="btn sm" onclick="settAdd('A')">+ Add to A</button>
-        <button class="btn sm" onclick="settAdd('B')">+ Add to B</button>
+        <button class="btn sm" data-on-click="settAdd('A')">+ Add to A</button>
+        <button class="btn sm" data-on-click="settAdd('B')">+ Add to B</button>
       </div>
     </div>
 
@@ -793,7 +796,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="sett-panel" id="settPanel-min" hidden>
       <div class="sett-note">Minimum staff needed each weekday for each shift type. The generator fills weekdays up to these numbers; the health banner flags any day below them. Weekend day cover is the fixed 2-RN turn (edit D7 only). <b>N7</b> is the <b>night</b> requirement and applies every day — it is staffed by the <b>Night cycle</b> turn (that many RNs from Group A, and that many from Group B, alternating weeks), never by day shifts.</div>
       <div id="settMinBody"></div>
-      <div class="mactions" style="margin-top:var(--sp-3)"><button class="btn sm" onclick="minReset()">Reset to defaults</button></div>
+      <div class="mactions" style="margin-top:var(--sp-3)"><button class="btn sm" data-on-click="minReset()">Reset to defaults</button></div>
     </div>
 
     <div class="sett-panel" id="settPanel-shifts" hidden>
@@ -809,9 +812,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="sett-panel" id="settPanel-gen" hidden>
       <div class="fatigue-box">
         <h4 class="fatigue-h">What Generate fills <span class="fatigue-sub">(Manual mode — Auto mode always fills everything)</span></h4>
-        <label class="fatigue-row"><input type="checkbox" id="gpWeekdays" onchange="setGenPart('weekdays',this.checked)"> <b>Weekdays</b> — Mon–Fri day &amp; evening shifts</label>
-        <label class="fatigue-row"><input type="checkbox" id="gpWeekends" onchange="setGenPart('weekends',this.checked)"> <b>Weekends</b> — the Sat/Sun day turn</label>
-        <label class="fatigue-row"><input type="checkbox" id="gpNights" onchange="setGenPart('nights',this.checked)"> <b>Nights</b> — the night turn (N7)</label>
+        <label class="fatigue-row"><input type="checkbox" id="gpWeekdays" data-on-change="setGenPart('weekdays',this.checked)"> <b>Weekdays</b> — Mon–Fri day &amp; evening shifts</label>
+        <label class="fatigue-row"><input type="checkbox" id="gpWeekends" data-on-change="setGenPart('weekends',this.checked)"> <b>Weekends</b> — the Sat/Sun day turn</label>
+        <label class="fatigue-row"><input type="checkbox" id="gpNights" data-on-change="setGenPart('nights',this.checked)"> <b>Nights</b> — the night turn (N7)</label>
         <div class="fatigue-row" style="margin-top:var(--sp-2)"><b>Shifts</b> <span class="fatigue-sub">— combine with the parts above: Weekdays + D6 fills only weekday D6; the weekend turn is D7</span></div>
         <div class="gp-shifts" id="gpShifts"></div>
         <div class="sett-note" style="margin-top:var(--sp-2)">Unticked parts are left blank but <b>reserved</b>: a nurse on the night or weekend turn only gets the rest of their 4/3 · 3/4 on weekdays. Tick another part later and press <b>Generate</b> again — it fills just the new part and keeps everything already on the grid. Once every ticked part is in, the button becomes <b>Regenerate</b> and redoes only the ticked parts.</div>
@@ -822,9 +825,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="sett-panel" id="settPanel-rules" hidden>
       <div class="fatigue-box">
         <h4 class="fatigue-h">Fatigue rules <span class="fatigue-sub">(advisory warnings in the health banner — never change the schedule)</span></h4>
-        <label class="fatigue-row"><input type="checkbox" id="fgTurn" onchange="setFatigue('turnaround',this.checked)"> Warn on a <b>night → day</b> shift the next day</label>
-        <label class="fatigue-row">Max <input type="number" id="fgMaxN" min="0" max="31" class="fatigue-num" onchange="setFatigue('maxNights',this.value)"> <b>nights per month</b> <span class="fatigue-sub">(0 = off)</span></label>
-        <label class="fatigue-row">At least <input type="number" id="fgRest" min="1" max="7" class="fatigue-num" onchange="setFatigue('minRest',this.value)"> <b>days off between working stretches</b> <span class="fatigue-sub">(1 = off)</span></label>
+        <label class="fatigue-row"><input type="checkbox" id="fgTurn" data-on-change="setFatigue('turnaround',this.checked)"> Warn on a <b>night → day</b> shift the next day</label>
+        <label class="fatigue-row">Max <input type="number" id="fgMaxN" min="0" max="31" class="fatigue-num" data-on-change="setFatigue('maxNights',this.value)"> <b>nights per month</b> <span class="fatigue-sub">(0 = off)</span></label>
+        <label class="fatigue-row">At least <input type="number" id="fgRest" min="1" max="7" class="fatigue-num" data-on-change="setFatigue('minRest',this.value)"> <b>days off between working stretches</b> <span class="fatigue-sub">(1 = off)</span></label>
       </div>
     </div>
 
@@ -833,7 +836,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     </div>
 
     <div class="mactions" style="margin-top:1rem;justify-content:flex-end">
-      <button class="btn accent" onclick="closeSettings()">Done</button>
+      <button class="btn accent" data-on-click="closeSettings()">Done</button>
     </div>
   </div>
 </div>
@@ -842,9 +845,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="report-head">
       <h3 style="margin:0">Requests</h3>
       <div class="report-nav">
-        <button class="btn icon-only" onclick="reqCycle(-1)" title="Previous fortnight" aria-label="Previous"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button class="btn icon-only" data-on-click="reqCycle(-1)" title="Previous fortnight" aria-label="Previous"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
         <span id="reqCycLabel" class="report-month">—</span>
-        <button class="btn icon-only" onclick="reqCycle(1)" title="Next fortnight" aria-label="Next"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="btn icon-only" data-on-click="reqCycle(1)" title="Next fortnight" aria-label="Next"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
       </div>
     </div>
     <div class="req-form">
@@ -862,7 +865,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
         <textarea class="ninput" id="reqReason" rows="2" maxlength="300" placeholder="e.g. child's school event · medical appointment · exam" style="resize:vertical;line-height:var(--lh-normal);margin:4px 0 0"></textarea>
       </label>
       <div class="mactions" style="margin-top:10px">
-        <button class="btn accent" onclick="reqAdd()">Add request</button>
+        <button class="btn accent" data-on-click="reqAdd()">Add request</button>
         <span id="reqAddMsg" style="font-size:11px;color:var(--muted-2);align-self:center"></span>
       </div>
     </div>
@@ -870,12 +873,12 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="report-body" id="reqList" style="max-height:34vh"></div>
     <div class="req-note">Requests are locked: the schedule automatically rebuilds around them and keeps every staffing rule it can. A request never changes another. Anything the rules can't satisfy (e.g. too many off the same day) is flagged in the banner.</div>
     <div class="mactions" style="margin-top:1rem;justify-content:space-between">
-      <button class="btn danger" onclick="reqClearAll()" title="Delete every logged request">Clear all</button>
+      <button class="btn danger" data-on-click="reqClearAll()" title="Delete every logged request">Clear all</button>
       <span style="display:flex;gap:var(--sp-2)">
-        <button class="btn" onclick="exportRequestReport()" title="Download an Excel sheet of this fortnight's time-off requests (Req off, Day off, Holiday, Vacation, Sick leave) with each RN's reason">
+        <button class="btn" data-on-click="exportRequestReport()" title="Download an Excel sheet of this fortnight's time-off requests (Req off, Day off, Holiday, Vacation, Sick leave) with each RN's reason">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Request report
         </button>
-        <button class="btn accent" onclick="closeRequests()">Close</button>
+        <button class="btn accent" data-on-click="closeRequests()">Close</button>
       </span>
     </div>
   </div>
@@ -895,29 +898,29 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
             <input class="ninput" id="sreqTitle" type="text" maxlength="60" placeholder="e.g. PACU" style="margin:0">
           </label>
           <div class="mactions" style="justify-content:flex-start;margin-top:10px">
-            <button class="btn accent" onclick="sreqCreate()">Create the staff link</button>
+            <button class="btn accent" data-on-click="sreqCreate()">Create the staff link</button>
             <span class="sreq-msg" id="sreqSetupMsg" role="status"></span>
           </div>
         </div>
         <div id="sreqLinkBox" hidden>
           <div class="req-days-lbl">Link to send to staff</div>
           <div class="sreq-link">
-            <input class="ninput" id="sreqUrl" type="text" readonly onfocus="this.select()" aria-label="Staff request link">
-            <button class="btn accent" onclick="sreqCopy()">Copy link</button>
-            <button class="btn" id="sreqPauseBtn" onclick="sreqToggleOpen()">Pause</button>
-            <button class="btn danger" onclick="sreqNewLink()" title="Stop the current link and make a new one">New link</button>
+            <input class="ninput" id="sreqUrl" type="text" readonly data-on-focus="selectAll(this)" aria-label="Staff request link">
+            <button class="btn accent" data-on-click="sreqCopy()">Copy link</button>
+            <button class="btn" id="sreqPauseBtn" data-on-click="sreqToggleOpen()">Pause</button>
+            <button class="btn danger" data-on-click="sreqNewLink()" title="Stop the current link and make a new one">New link</button>
           </div>
           <div class="sreq-state" id="sreqStateMsg"></div>
         </div>
       </div>
       <div class="req-list-h">Received <span id="sreqCount" class="req-count"></span>
-        <label class="sreq-filter"><input type="checkbox" id="sreqShowDone" onchange="renderStaffReqList()"> Show done</label>
+        <label class="sreq-filter"><input type="checkbox" id="sreqShowDone" data-on-change="renderStaffReqList()"> Show done</label>
       </div>
       <div class="report-body" id="sreqList" style="max-height:38vh"></div>
       <div class="req-note">A reference list only — nothing here changes the roster. To grant a request, add it in the <b>Requests</b> window, then tick it here as done.</div>
     </div>
     <div class="mactions" style="margin-top:1rem">
-      <button class="btn accent" onclick="closeStaffReq()">Close</button>
+      <button class="btn accent" data-on-click="closeStaffReq()">Close</button>
     </div>
   </div>
 </div>
@@ -931,27 +934,27 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:6px;line-height:var(--lh-normal)">Before sign-in, the roster was shared under a unit code that anyone could use. Check whether a copy is still stored there, then delete it.</div>
       <div style="display:flex;gap:var(--sp-2)">
         <input class="ninput" id="unitInput" type="text" placeholder="old unit code" autocomplete="off" style="margin:0" aria-label="Old unit code">
-        <button class="btn" onclick="legacyCheck()">Check</button>
+        <button class="btn" data-on-click="legacyCheck()">Check</button>
       </div>
       <div id="legacyMsg" role="status" style="font-size:var(--fs-xs);color:var(--muted-2);margin:6px 0;line-height:var(--lh-normal);min-height:16px"></div>
       <div id="legacyActions" style="display:none;gap:var(--sp-2);margin-bottom:var(--sp-4)">
-        <button class="btn" style="flex:1" onclick="legacyUse()" title="Replace the roster in your account with the old shared copy">Use this roster</button>
-        <button class="btn danger" style="flex:1" onclick="legacyDelete()" title="Delete the old shared copy for good">Delete old copy</button>
+        <button class="btn" style="flex:1" data-on-click="legacyUse()" title="Replace the roster in your account with the old shared copy">Use this roster</button>
+        <button class="btn danger" style="flex:1" data-on-click="legacyDelete()" title="Delete the old shared copy for good">Delete old copy</button>
       </div>
     </div>
     <div class="slbl">Backup</div>
     <div style="display:flex;gap:var(--sp-2);margin-bottom:var(--sp-2)">
-      <button class="btn" style="flex:1" onclick="exportBackup()" title="Download a full backup file (roster, requests, schedule settings)">
+      <button class="btn" style="flex:1" data-on-click="exportBackup()" title="Download a full backup file (roster, requests, schedule settings)">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>Export
       </button>
-      <button class="btn" style="flex:1" onclick="document.getElementById('importFile').click()" title="Restore everything from a backup file">
+      <button class="btn" style="flex:1" data-on-click="openImportPicker()" title="Restore everything from a backup file">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9m0 0l-4 4m4-4l4 4M5 3h14"/></svg>Import
       </button>
-      <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importBackup(this)">
+      <input type="file" id="importFile" accept="application/json,.json" style="display:none" data-on-change="importBackup(this)">
     </div>
     <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)">Export saves everything to a file on this device. Import replaces the current schedule — you'll be asked to confirm, and it can be undone.</div>
     <div class="mactions">
-      <button class="btn accent" onclick="closeCloud()">Close</button>
+      <button class="btn accent" data-on-click="closeCloud()">Close</button>
     </div>
   </div>
 </div>
@@ -963,12 +966,12 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <textarea class="ninput" id="mNoteIn" rows="2" maxlength="300" placeholder="e.g. swapped with RN 7 · covering sick leave · why this is flagged" style="resize:vertical;line-height:var(--lh-normal)"></textarea>
     <div class="mactions" style="justify-content:space-between">
       <span style="display:flex;gap:8px">
-        <button class="btn" id="flagCellBtn" onclick="toggleFlagBtn()" title="Flag this cell so it stands out on the schedule">⚐ Flag</button>
-        <button class="btn" id="resetCellBtn" onclick="resetCell()" title="Remove this entry and let the schedule auto-fill this cell">Reset to auto</button>
+        <button class="btn" id="flagCellBtn" data-on-click="toggleFlagBtn()" title="Flag this cell so it stands out on the schedule">⚐ Flag</button>
+        <button class="btn" id="resetCellBtn" data-on-click="resetCell()" title="Remove this entry and let the schedule auto-fill this cell">Reset to auto</button>
       </span>
       <span style="display:flex;gap:8px">
-        <button class="btn" onclick="closeCell()">Cancel</button>
-        <button class="btn accent" onclick="saveCell()">Save</button>
+        <button class="btn" data-on-click="closeCell()">Cancel</button>
+        <button class="btn accent" data-on-click="saveCell()">Save</button>
       </span>
     </div>
   </div>
@@ -982,20 +985,20 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <select class="gsel" id="gSel"><option value="A">Group A</option><option value="B">Group B</option></select>
     <div class="slbl">Position in list</div>
     <div style="display:flex;gap:8px;margin-bottom:1rem">
-      <button class="btn sm" onclick="moveRn(-1)" title="Move up one position">▲ Move up</button>
-      <button class="btn sm" onclick="moveRn(1)" title="Move down one position">▼ Move down</button>
+      <button class="btn sm" data-on-click="moveRn(-1)" title="Move up one position">▲ Move up</button>
+      <button class="btn sm" data-on-click="moveRn(1)" title="Move down one position">▼ Move down</button>
     </div>
     <div class="slbl">Swap turn with another RN</div>
     <div style="display:flex;gap:8px;margin-bottom:6px">
       <select class="gsel" id="swapSel" style="margin-bottom:0"></select>
-      <button class="btn sm" onclick="swapRn()" title="Trade groups and list positions — the two RNs exchange turns, nobody else moves">Swap</button>
+      <button class="btn sm" data-on-click="swapRn()" title="Trade groups and list positions — the two RNs exchange turns, nobody else moves">Swap</button>
     </div>
     <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:1rem;line-height:var(--lh-normal)">The two trade groups and places in the list, so they take each other's night and weekend turns. Everyone else keeps their turn.</div>
     <div class="mactions" style="justify-content:space-between">
-      <button class="btn danger" onclick="removeRN(mEditIdx)" title="Remove this RN from the roster">Delete RN</button>
+      <button class="btn danger" data-on-click="removeEditedRN()" title="Remove this RN from the roster">Delete RN</button>
       <span style="display:flex;gap:8px">
-        <button class="btn" onclick="closeNameM()">Cancel</button>
-        <button class="btn accent" onclick="saveName()">Save</button>
+        <button class="btn" data-on-click="closeNameM()">Cancel</button>
+        <button class="btn accent" data-on-click="saveName()">Save</button>
       </span>
     </div>
   </div>
@@ -1005,9 +1008,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <h3>Change history</h3>
     <div class="hist-list" id="histList"></div>
     <div class="mactions" style="margin-top:1rem">
-      <button class="btn" onclick="clearHistory()">Clear all</button>
-      <button class="btn" onclick="undo()" title="Undo last change">Undo last</button>
-      <button class="btn accent" onclick="closeHistory()">Close</button>
+      <button class="btn" data-on-click="clearHistory()">Clear all</button>
+      <button class="btn" data-on-click="undo()" title="Undo last change">Undo last</button>
+      <button class="btn accent" data-on-click="closeHistory()">Close</button>
     </div>
   </div>
 </div>
@@ -1057,6 +1060,64 @@ window.addEventListener('unhandledrejection',e=>{
 document.addEventListener('securitypolicyviolation',e=>{
   noteProblem('The page was stopped from loading or contacting something',`${e.blockedURI||'inline'} (${e.violatedDirective})`);
 });
+
+/* ---------- buttons without inline code (audit H3) ---------- */
+// Buttons and fields say what they do in a data-on-<event> attribute holding one call,
+// e.g. data-on-click="reqDelete('2026-11-16','u12')". Nothing here evaluates text: the
+// call is parsed into a global function's name and plain values (numbers, quoted text,
+// true/false/null, this, event, this.value, this.checked), then that function is called.
+// That is what lets the security policy refuse all inline script. Events are handled at
+// the document and walk up from the element that was hit, so nested handlers still run
+// inner first and event.stopPropagation() still stops the outer ones.
+const ON_EVENTS={click:'click',change:'change',keydown:'keydown',focusin:'focus',drop:'drop',dragstart:'dragstart',dragover:'dragover',dragend:'dragend'};
+const ON_CALL=/^\s*([A-Za-z_$][\w$]*)\s*\(([\s\S]*)\)\s*;?\s*$/;
+const ON_ARG=/\s*(-?\d+(?:\.\d+)?|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|true|false|null|this\.value|this\.checked|this|event)\s*(,|$)/y;
+const onParsed=new Map();
+function onParse(code){
+  if(onParsed.has(code))return onParsed.get(code);
+  let r=null;const m=ON_CALL.exec(code);
+  if(m){
+    const args=[],src=m[2];let ok=true;ON_ARG.lastIndex=0;
+    if(src.trim())while(ON_ARG.lastIndex<src.length){
+      const at=ON_ARG.lastIndex,t=ON_ARG.exec(src);
+      if(!t||t.index!==at){ok=false;break;}
+      args.push(t[1]);if(!t[2])break;
+    }
+    if(ok&&(!src.trim()||ON_ARG.lastIndex>=src.length))r={name:m[1],args};
+  }
+  onParsed.set(code,r);return r;
+}
+function onValue(tok,el,ev){
+  if(tok==='this')return el;
+  if(tok==='event')return ev;
+  if(tok==='this.value')return el.value;
+  if(tok==='this.checked')return el.checked;
+  if(tok==='true')return true;
+  if(tok==='false')return false;
+  if(tok==='null')return null;
+  if(tok[0]==="'"||tok[0]==='"')return tok.slice(1,-1).replace(/\\(.)/g,'$1');
+  return Number(tok);
+}
+function onRun(el,ev,kind){
+  const code=el.getAttribute('data-on-'+kind),call=onParse(code);
+  const fn=call&&Object.prototype.hasOwnProperty.call(window,call.name)?window[call.name]:null;
+  if(typeof fn!=='function'){noteProblem('A button is wired to something that does not exist',code);return;}
+  fn(...call.args.map(t=>onValue(t,el,ev)));
+}
+for(const type in ON_EVENTS){
+  const kind=ON_EVENTS[type],attr='data-on-'+kind;
+  document.addEventListener(type,ev=>{
+    for(let el=ev.target instanceof Element?ev.target:ev.target&&ev.target.parentElement;el&&el.nodeType===1;el=el.parentElement){
+      if(!el.hasAttribute(attr))continue;
+      try{onRun(el,ev,kind);}catch(err){noteProblem(err&&err.message||String(err),el.getAttribute(attr));}
+      if(ev.cancelBubble)break;
+    }
+  });
+}
+function openImportPicker(){document.getElementById('importFile').click();}
+function lockForgotKey(ev){if(ev.key==='Enter')lockForgot();}
+function selectAll(el){if(el&&el.select)el.select();}
+function removeEditedRN(){removeRN(mEditIdx);}
 const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 // the five core day shifts — the pool the auto-generator fills from (never custom),
 // the columns of the staffing-minimums grid, and the base of every derived table
@@ -2097,11 +2158,11 @@ function renderStaffReqList(){
     const at=r.at?new Date(r.at):null;
     const when=at?`received ${fmt(at)} ${at.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`:'';
     return `<div class="req-row sreq-row${r.done?' done':''}">`+
-      `<input type="checkbox"${r.done?' checked':''} onchange="sreqSetDone('${escapeHtml(r.id)}',this.checked)" title="Tick when you have dealt with this request" aria-label="Done">`+
+      `<input type="checkbox"${r.done?' checked':''} data-on-change="sreqSetDone('${escapeHtml(r.id)}',this.checked)" title="Tick when you have dealt with this request" aria-label="Done">`+
       `<span class="rr-rn">${escapeHtml(sreqName(r))}</span>`+
       `<span class="rr-date">${escapeHtml(sreqDatesLabel(r.dates))}</span>`+
       `<span class="rr-date sreq-at">${escapeHtml(when)}</span>`+
-      `<button class="rr-del" title="Delete this request" aria-label="Delete this request" onclick="sreqDelete('${escapeHtml(r.id)}')">✕</button>`+
+      `<button class="rr-del" title="Delete this request" aria-label="Delete this request" data-on-click="sreqDelete('${escapeHtml(r.id)}')">✕</button>`+
       `<span class="sreq-why">${escapeHtml(r.reason)}</span></div>`;
   }).join('');
 }
@@ -2374,11 +2435,11 @@ function renderGrid(){
     const ok=tot===7;
     if(!ok)allOk=false;
     const wc=ok?'wk-ok':'wk-warn';
-    h+=`<tr ondragover="rowDragOver(event)" ondrop="rowDrop(event,${pos})"><td class="rn-col"><span class="drag-h" draggable="true" ondragstart="rowDragStart(event,${pos})" ondragend="rowDragEnd()" title="Drag to reorder">⠿</span><span class="rn-name" onclick="openNameM(${i})">${escapeHtml(names[i])}</span><span class="rn-grp" style="color:${gc}">${groups[i]}</span></td>`;
+    h+=`<tr data-on-dragover="rowDragOver(event,this)" data-on-drop="rowDrop(event,${pos})"><td class="rn-col"><span class="drag-h" draggable="true" data-on-dragstart="rowDragStart(event,${pos})" data-on-dragend="rowDragEnd()" title="Drag to reorder">⠿</span><span class="rn-name" data-on-click="openNameM(${i})">${escapeHtml(names[i])}</span><span class="rn-grp" style="color:${gc}">${groups[i]}</span></td>`;
     for(let d=0;d<14;d++){const s=sh[i][d];
       const fl=isFlagged(rid(i),days[d])?' flagged':'';
       const nt=noteFor(rid(i),days[d]);
-      h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} onclick="openCellM(${i},${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;}
+      h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} data-on-click="openCellM(${i},${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;}
     h+=`<td class="sep wk-num ${wc}">${w1}</td><td class="sep wk-num ${wc}">${w2}</td><td class="sep wk-num ${wc}">${tot}</td></tr>`;
   });
 
@@ -2399,14 +2460,14 @@ function renderGrid(){
   for(const g of STAFF_GROUPS){
     h+=`<tr class="grp-row"><td class="grp-lbl">${escapeHtml(staffGroupLabel(g.key))}</td><td colspan="16"></td></tr>`;
     for(const p of staffOf(g.key)){
-      h+=`<tr><td class="rn-col"><input class="staff-name" value="${escapeHtml(p.name)}" onchange="setStaffName('${p.id}',this.value)" aria-label="Name"${cycleLocked()?' readonly':''}></td>`;
+      h+=`<tr><td class="rn-col"><input class="staff-name" value="${escapeHtml(p.name)}" data-on-change="setStaffName('${p.id}',this.value)" aria-label="Name"${cycleLocked()?' readonly':''}></td>`;
       let w1=0,w2=0;
       for(let d=0;d<14;d++){
         const s=staffShiftAt(p.id,days[d]);
         if(ENTRY_TYPES.has(s))(d<7?w1++:w2++);
         const fl=isFlagged(p.id,days[d])?' flagged':'';
         const nt=noteFor(p.id,days[d]);
-        h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} onclick="openStaffCellM('${p.id}',${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;
+        h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} data-on-click="openStaffCellM('${p.id}',${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;
       }
       h+=`<td class="sep wk-num">${w1}</td><td class="sep wk-num">${w2}</td><td class="sep wk-num">${w1+w2}</td></tr>`;
     }
@@ -2607,10 +2668,10 @@ function renderTracker(){
     const vacRemCls=vacRem<0?'bal-neg':vacRem<=3?'bal-low':'vac-val';
     h+=`<tr>
       <td class="tn"><span style="color:${gc};font-size:var(--fs-xs);font-family:var(--font-mono);font-weight:600;margin-right:5px">${groups[i]}</span>${escapeHtml(names[i])}</td>
-      <td><input class="bal-input" type="number" min="0" max="99" value="${holBal[i]}" onchange="setHolBal(${i},this.value)" style="color:var(--hol-fg)"></td>
+      <td><input class="bal-input" type="number" min="0" max="99" value="${holBal[i]}" data-on-change="setHolBal(${i},this.value)" style="color:var(--hol-fg)"></td>
       <td class="hol-val">${holUsed}</td>
       <td class="${holRemCls}">${holRem}</td>
-      <td><input class="bal-input" type="number" min="0" max="99" value="${vacBal[i]}" onchange="setVacBal(${i},this.value)" style="color:var(--vac-fg)"></td>
+      <td><input class="bal-input" type="number" min="0" max="99" value="${vacBal[i]}" data-on-change="setVacBal(${i},this.value)" style="color:var(--vac-fg)"></td>
       <td class="vac-val">${vacUsed}</td>
       <td class="${vacRemCls}">${vacRem}</td>
       <td class="sl-val">${slUsed}</td>
@@ -2685,7 +2746,7 @@ function renderGenTab(){
   ensureGenParts();
   for(const p of GEN_PARTS){const e=document.getElementById('gp'+GEN_LABEL[p]);if(e)e.checked=genParts[p];}
   const sb=document.getElementById('gpShifts');
-  if(sb)sb.innerHTML=GEN_SHIFTS.map(x=>`<label class="gp-shift"><input type="checkbox" id="gpS_${x}"${genParts.shifts[x]?' checked':''} onchange="setGenPart('${x}',this.checked)"> <span class="sc s-${x}">${x}</span> <span class="gp-sub">${escapeHtml(LABELS_M[x]||'')}</span></label>`).join('');
+  if(sb)sb.innerHTML=GEN_SHIFTS.map(x=>`<label class="gp-shift"><input type="checkbox" id="gpS_${x}"${genParts.shifts[x]?' checked':''} data-on-change="setGenPart('${x}',this.checked)"> <span class="sc s-${x}">${x}</span> <span class="gp-sub">${escapeHtml(LABELS_M[x]||'')}</span></label>`).join('');
   const st=document.getElementById('genStatus');if(!st)return;
   const done=partsDone(cycleStartISO(cycleOffset)),left=ALL_UNITS.filter(u=>!done.includes(u));
   const tk=tickedUnits();
@@ -2719,11 +2780,11 @@ function renderSettings(){
       h+=`<div class="sett-row${cls}">
         <span class="sett-slot">${pos+1}</span>
         <span class="sett-nm">${escapeHtml(names[i])}</span>${tag}
-        <button class="sett-btn swap${armed?' on':''}" onclick="settSwap(${i})" title="${armed?'Cancel swap':'Swap turn with another RN'}">⇄</button>
-        <button class="sett-btn" onclick="settMove(${i},-1)" title="Move up a slot"${pos===0?' disabled style="opacity:.3"':''}>▲</button>
-        <button class="sett-btn" onclick="settMove(${i},1)" title="Move down a slot"${pos===list.length-1?' disabled style="opacity:.3"':''}>▼</button>
-        <button class="sett-btn" onclick="settToGroup(${i},'${other}')" title="Move to Group ${other}">${gk==='A'?'→':'←'}</button>
-        <button class="sett-btn del" onclick="settRemove(${i})" title="Remove this RN">✕</button>
+        <button class="sett-btn swap${armed?' on':''}" data-on-click="settSwap(${i})" title="${armed?'Cancel swap':'Swap turn with another RN'}">⇄</button>
+        <button class="sett-btn" data-on-click="settMove(${i},-1)" title="Move up a slot"${pos===0?' disabled style="opacity:.3"':''}>▲</button>
+        <button class="sett-btn" data-on-click="settMove(${i},1)" title="Move down a slot"${pos===list.length-1?' disabled style="opacity:.3"':''}>▼</button>
+        <button class="sett-btn" data-on-click="settToGroup(${i},'${other}')" title="Move to Group ${other}">${gk==='A'?'→':'←'}</button>
+        <button class="sett-btn del" data-on-click="settRemove(${i})" title="Remove this RN">✕</button>
       </div>`;
     });
     return h+'</div>';
@@ -2804,9 +2865,9 @@ function renderNightTab(){
       if(first)c+=`<div class="sett-slot" style="display:block;margin:8px 0 2px;color:var(--muted-2)">Turn ${turn}</div>`;
       c+=`<div class="sett-row">
         <span class="sett-nm">${escapeHtml(nm)}</span>
-        <button class="sett-btn" onclick="nightMove('${id}',-1)" title="Earlier turn"${pos===0?' disabled style="opacity:.3"':''}>&#9650;</button>
-        <button class="sett-btn" onclick="nightMove('${id}',1)" title="Later turn"${pos===q.length-1?' disabled style="opacity:.3"':''}>&#9660;</button>
-        <button class="sett-btn del" onclick="nightRemove('${id}')" title="Remove from the night cycle">&#10005;</button>
+        <button class="sett-btn" data-on-click="nightMove('${id}',-1)" title="Earlier turn"${pos===0?' disabled style="opacity:.3"':''}>&#9650;</button>
+        <button class="sett-btn" data-on-click="nightMove('${id}',1)" title="Later turn"${pos===q.length-1?' disabled style="opacity:.3"':''}>&#9660;</button>
+        <button class="sett-btn del" data-on-click="nightRemove('${id}')" title="Remove from the night cycle">&#10005;</button>
       </div>`;
     });
     return c+'</div>';
@@ -2829,7 +2890,7 @@ function renderNightTab(){
   if(missing.length){
     h+=`<div class="mactions" style="margin-top:var(--sp-3)"><select id="nightAddSel" class="gsel">`+
        missing.map(x=>`<option value="${x.id}">${escapeHtml(x.nm)} (${x.g})</option>`).join('')+
-       `</select><button class="btn sm" onclick="nightAdd()">+ Add to night cycle</button></div>`;
+       `</select><button class="btn sm" data-on-click="nightAdd()">+ Add to night cycle</button></div>`;
   }
   // entries sitting on a night-turn nurse's night days cancel those nights
   const bl=nightBlockers(cycleOffset);
@@ -2837,10 +2898,10 @@ function renderNightTab(){
   if(hard.length){
     h+=`<div class="sett-swaphint" style="margin-top:var(--sp-3)">This cycle: ${hard.map(x=>`<b>${escapeHtml(names[x.i])}</b> (${x.blocked.length})`).join(', ')}
       ${hard.length>1?'are':'is'} on the night turn but ${hard.length>1?'their':'that'} night days carry other entries, so those nights are <b>not staffed</b>.</div>
-      <div class="mactions" style="margin-top:var(--sp-2)"><button class="btn sm" onclick="freeNightTurn()" title="Clear the day-shift entries cancelling this cycle's night turn">Free the night turn for this cycle</button></div>`;
+      <div class="mactions" style="margin-top:var(--sp-2)"><button class="btn sm" data-on-click="freeNightTurn()" title="Clear the day-shift entries cancelling this cycle's night turn">Free the night turn for this cycle</button></div>`;
   }
   if(absent.length)h+=`<div class="sett-note" style="margin-top:var(--sp-2)">${absent.map(x=>escapeHtml(names[x.i])).join(', ')} ${absent.length>1?'have':'has'} a holiday/vacation/sick leave/requested-off on a night day this cycle — those nights stay uncovered for you to fill by hand.</div>`;
-  if(custom)h+=`<div class="mactions" style="margin-top:var(--sp-2)"><button class="btn sm" onclick="nightReset()" title="Back to the default: every RN eligible">Reset to default (everyone)</button></div>`;
+  if(custom)h+=`<div class="mactions" style="margin-top:var(--sp-2)"><button class="btn sm" data-on-click="nightReset()" title="Back to the default: every RN eligible">Reset to default (everyone)</button></div>`;
   box.innerHTML=h;
 }
 // move an RN earlier/later in THEIR OWN group's night rotation (the two groups
@@ -2932,7 +2993,7 @@ function renderMinTab(){
       const dis=(wknd&&t!=='D7'&&t!=='N7');
       const tip=t==='N7'?'RNs on nights this day — staffed by the night cycle'
                         :(dis?'Weekend day cover is the fixed 2-RN turn':'Minimum RNs on this shift');
-      h+=`<div><input class="min-num${v?'':' zero'}" type="number" min="0" max="20" value="${v}"${dis?' disabled':''} title="${tip}" onchange="minSet(${d},'${t}',this.value)"></div>`;
+      h+=`<div><input class="min-num${v?'':' zero'}" type="number" min="0" max="20" value="${v}"${dis?' disabled':''} title="${tip}" data-on-change="minSet(${d},'${t}',this.value)"></div>`;
     }
     h+=`<div class="mh">${tot}</div>`;
   }
@@ -2971,16 +3032,16 @@ function renderShiftTab(){
   customShifts.forEach((s,i)=>{
     h+=`<div class="shift-row">
       <span class="leg-badge b-${s.code}" style="min-width:34px;text-align:center">${escapeHtml(s.code)}</span>
-      <input class="staff-label-in" value="${escapeHtml(s.label)}" onchange="setShiftLabel(${i},this.value)" placeholder="hours e.g. 10a–6p">
-      <input type="color" value="${s.color}" onchange="setShiftColor(${i},this.value)" title="Colour" class="shift-color">
-      <button class="sett-btn del" onclick="removeShift(${i})" title="Remove">✕</button>
+      <input class="staff-label-in" value="${escapeHtml(s.label)}" data-on-change="setShiftLabel(${i},this.value)" placeholder="hours e.g. 10a–6p">
+      <input type="color" value="${s.color}" data-on-change="setShiftColor(${i},this.value)" title="Colour" class="shift-color">
+      <button class="sett-btn del" data-on-click="removeShift(${i})" title="Remove">✕</button>
     </div>`;
   });
   h+=`<div class="shift-row" style="margin-top:10px">
       <input class="staff-label-in" id="newShiftCode" placeholder="code" maxlength="4" style="max-width:80px;text-transform:uppercase">
       <input class="staff-label-in" id="newShiftLabel" placeholder="hours e.g. 6a–2p">
       <input type="color" id="newShiftColor" value="#4aa3df" class="shift-color">
-      <button class="btn sm" onclick="addShift()">+ Add</button>
+      <button class="btn sm" data-on-click="addShift()">+ Add</button>
     </div><div id="shiftMsg" class="fatigue-sub" style="margin-top:6px"></div></div>`;
   box.innerHTML=h;
 }
@@ -3009,13 +3070,13 @@ function renderStaffTab(){
   for(const g of STAFF_GROUPS){
     const list=staffOf(g.key);
     h+=`<div class="staff-cfg"><div class="staff-cfg-head">
-      <input class="staff-label-in" value="${escapeHtml(staffGroupLabel(g.key))}" onchange="setStaffLabel('${g.key}',this.value)" aria-label="Group name">
+      <input class="staff-label-in" value="${escapeHtml(staffGroupLabel(g.key))}" data-on-change="setStaffLabel('${g.key}',this.value)" aria-label="Group name">
       <span class="fatigue-sub">(${list.length})</span>
-      <button class="btn sm" onclick="addStaff('${g.key}')">+ Add</button></div>`;
+      <button class="btn sm" data-on-click="addStaff('${g.key}')">+ Add</button></div>`;
     if(!list.length)h+='<div class="req-empty">Nobody in this group.</div>';
     for(const p of list){
-      h+=`<div class="staff-cfg-row"><input class="staff-label-in" value="${escapeHtml(p.name)}" onchange="setStaffName('${p.id}',this.value)" aria-label="Name">
-        <button class="sett-btn del" onclick="removeStaff('${p.id}')" title="Remove">✕</button></div>`;
+      h+=`<div class="staff-cfg-row"><input class="staff-label-in" value="${escapeHtml(p.name)}" data-on-change="setStaffName('${p.id}',this.value)" aria-label="Name">
+        <button class="sett-btn del" data-on-click="removeStaff('${p.id}')" title="Remove">✕</button></div>`;
     }
     h+='</div>';
   }
@@ -3044,21 +3105,21 @@ function renderDataTab(){
   box.innerHTML=`
     <div class="fatigue-box">
       <h4 class="fatigue-h">Default balances for new RNs</h4>
-      <label class="fatigue-row">Holiday <input type="number" id="defHolIn" min="0" max="99" class="fatigue-num" value="${defHol}" onchange="setDefBal('hol',this.value)"> days</label>
-      <label class="fatigue-row">Vacation <input type="number" id="defVacIn" min="0" max="99" class="fatigue-num" value="${defVac}" onchange="setDefBal('vac',this.value)"> days</label>
-      <div class="fatigue-row" style="margin-top:10px"><button class="btn sm" onclick="setAllBal()">Set ALL current RNs to these balances</button></div>
+      <label class="fatigue-row">Holiday <input type="number" id="defHolIn" min="0" max="99" class="fatigue-num" value="${defHol}" data-on-change="setDefBal('hol',this.value)"> days</label>
+      <label class="fatigue-row">Vacation <input type="number" id="defVacIn" min="0" max="99" class="fatigue-num" value="${defVac}" data-on-change="setDefBal('vac',this.value)"> days</label>
+      <div class="fatigue-row" style="margin-top:10px"><button class="btn sm" data-on-click="setAllBal()">Set ALL current RNs to these balances</button></div>
     </div>
     <div class="fatigue-box" style="margin-top:var(--sp-3)">
       <h4 class="fatigue-h">Generated fortnights <span class="fatigue-sub">(${Object.keys(frozen).length} stored)</span></h4>
       <div class="sett-note" style="margin:0 0 8px">A fortnight is saved exactly as it was generated, so cycles made before a rule change keep the old result. Rebuilding recomputes every stored fortnight with the current rules — <b>your requests, holidays and vacations are kept</b>.</div>
-      <div class="fatigue-row"><button class="btn sm" onclick="rebuildAllCycles()" title="Recompute every generated fortnight with the current rules">Rebuild all generated fortnights</button></div>
+      <div class="fatigue-row"><button class="btn sm" data-on-click="rebuildAllCycles()" title="Recompute every generated fortnight with the current rules">Rebuild all generated fortnights</button></div>
     </div>
     <div class="fatigue-box" style="margin-top:var(--sp-3)">
       <h4 class="fatigue-h">Backup &amp; reset</h4>
-      <div class="fatigue-row"><button class="btn sm" onclick="exportBackup()">Export backup</button>
-        <button class="btn sm" onclick="document.getElementById('importFile').click()">Import backup…</button></div>
-      <div class="fatigue-row" style="margin-top:6px"><button class="btn sm" onclick="pruneOld()" title="Delete stored generated grids for cycles far in the past">Prune old cycles</button>
-        <button class="btn sm" onclick="resetAll()" style="color:var(--neg)">Reset everything…</button></div>
+      <div class="fatigue-row"><button class="btn sm" data-on-click="exportBackup()">Export backup</button>
+        <button class="btn sm" data-on-click="openImportPicker()">Import backup…</button></div>
+      <div class="fatigue-row" style="margin-top:6px"><button class="btn sm" data-on-click="pruneOld()" title="Delete stored generated grids for cycles far in the past">Prune old cycles</button>
+        <button class="btn sm" data-on-click="resetAll()" style="color:var(--neg)">Reset everything…</button></div>
     </div>`;
 }
 function setDefBal(which,val){const v=Math.max(0,Math.min(99,parseInt(val)||0));if(which==='hol')defHol=v;else defVac=v;saveState();}
@@ -3206,7 +3267,7 @@ function removeRN(i){
 let dragSrcPos=null;
 function rowDragStart(e,pos){dragSrcPos=pos;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(pos));}catch(_){}}
 function rowDragEnd(){dragSrcPos=null;document.querySelectorAll('#tbl tr.drag-over').forEach(r=>r.classList.remove('drag-over'));}
-function rowDragOver(e){if(dragSrcPos===null)return;e.preventDefault();e.dataTransfer.dropEffect='move';const tr=e.currentTarget;document.querySelectorAll('#tbl tr.drag-over').forEach(r=>{if(r!==tr)r.classList.remove('drag-over');});tr.classList.add('drag-over');}
+function rowDragOver(e,tr){if(dragSrcPos===null)return;e.preventDefault();e.dataTransfer.dropEffect='move';document.querySelectorAll('#tbl tr.drag-over').forEach(r=>{if(r!==tr)r.classList.remove('drag-over');});tr.classList.add('drag-over');}
 function rowDrop(e,pos){e.preventDefault();if(cycleLocked()){rowDragEnd();lockedToast();return;}const from=dragSrcPos;rowDragEnd();if(from===null||from===pos)return;moveInOrder(from,pos);}
 function moveInOrder(from,to){
   if(from<0||from>=order.length||to<0||to>=order.length)return;
@@ -3274,7 +3335,7 @@ function reqRenderDays(){
       : (overrides[iso]&&overrides[iso][rid(who.rn)]!==undefined);
     const has=exists?' has-req':'';
     const sel=reqSelDays.has(d)?' sel':'';
-    h+=`<div class="req-day${wknd}${sel}${has}" onclick="reqToggleDay(${d})" title="${has?'already has a request for this person':''}">
+    h+=`<div class="req-day${wknd}${sel}${has}" data-on-click="reqToggleDay(${d})" title="${has?'already has a request for this person':''}">
         <div class="rd-dn">${DAYS[d%7]}</div><div class="rd-dt">${fmt(days[d])}</div></div>`;
   }
   document.getElementById('reqDays').innerHTML=h;
@@ -3319,7 +3380,7 @@ function renderRequests(){
         `<span class="rr-date">${lbl}</span>`+
         (()=>{const w=(notes[it.k]&&notes[it.k][it.id])||'';return w?`<span class="rr-why" title="${escapeHtml(w)}">${escapeHtml(w)}</span>`:'';})()+
         `<span class="rr-badge b-${escapeHtml(it.t)}">${it.t==='REQ'?'Req off':escapeHtml(it.t)}</span>`+
-        `<button class="rr-del" title="Delete this request" onclick="reqDelete('${escapeHtml(it.k)}','${escapeHtml(it.id)}')">✕</button></div>`;
+        `<button class="rr-del" title="Delete this request" data-on-click="reqDelete('${escapeHtml(it.k)}','${escapeHtml(it.id)}')">✕</button></div>`;
     }).join('');
   }
 }
@@ -3668,7 +3729,7 @@ function toggleFlagBtn(){mFlag=!mFlag;updateFlagBtn();}
 function shiftOptionsHTML(){
   return SHIFT_GROUPS.map(g=>
     `<div class="mgroup"><div class="mgroup-lbl">${escapeHtml(g.label)}</div><div class="mgrid">`+
-    g.types.map(s=>`<button class="mbtn${mSel===s?' sel':''}" data-s="${escapeHtml(s)}" onclick="pickSh('${escapeHtml(s)}')">${escapeHtml(LABELS_M[s])}</button>`).join('')+
+    g.types.map(s=>`<button class="mbtn${mSel===s?' sel':''}" data-s="${escapeHtml(s)}" data-on-click="pickSh('${escapeHtml(s)}')">${escapeHtml(LABELS_M[s])}</button>`).join('')+
     `</div></div>`).join('');
 }
 function pickSh(s){mSel=s;document.querySelectorAll('#mOpts .mbtn').forEach(b=>b.classList.toggle('sel',b.dataset.s===s));}

@@ -3,13 +3,14 @@
  *
  *   node test/vendor.test.mjs            # part of `npm run test:unit`
  *   node test/vendor.test.mjs --write    # after an intended change: update the manifest
- *                                        # checksums and request.html's script checksum
+ *                                        # checksums and both pages' inline-script checksums
  *
  * - every file in vendor/ is byte-for-byte what vendor/manifest.json records, and the
  *   Firebase files are the ones in node_modules/firebase (what test/cloud.mjs runs);
  * - neither page loads a script from another site;
- * - both pages carry a Content-Security-Policy, and request.html's inline script
- *   matches the checksum that policy allows.
+ * - both pages carry a Content-Security-Policy that allows no inline script except
+ *   the page's own, by checksum; no element carries inline event-handler code, and
+ *   every data-on-* attribute calls a function the page declares.
  */
 import fs from 'fs';
 import path from 'path';
@@ -59,17 +60,24 @@ for (const page of ['index.html', 'request.html']) {
   check(`${page}: may only talk to Google's API servers`, dir('connect-src') === 'https://*.googleapis.com', dir('connect-src'));
   check(`${page}: no script may come from a CDN`, !/jsdelivr|gstatic|cdnjs|unpkg/.test(dir('script-src')) && !dir('script-src').includes('*'), dir('script-src'));
   check(`${page}: scripts cannot be built from text (no eval)`, !dir('script-src').includes('unsafe-eval'));
-  if (page === 'request.html') {
-    const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
-    const want = inline.map(s => `'${sha(Buffer.from(s, 'utf8'), 'sha256')}'`);
-    if (WRITE && inline.length === 1) {
-      html = html.replace(/'sha256-[A-Za-z0-9+/=]+'/, want[0]);
-      fs.writeFileSync(path.join(ROOT, page), html);
-    }
-    const now = (fs.readFileSync(path.join(ROOT, page), 'utf8').match(/script-src ([^;]+)/) || [])[1] || '';
-    check('request.html: its one inline script is allowed by checksum, and nothing else inline is', inline.length === 1 && now.includes(want[0]) && !now.includes('unsafe-inline'), now);
-    check('request.html: no inline event handlers (they would be blocked)', !/\son[a-z]+="/.test(html));
+  const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
+  const want = inline.map(x => `'${sha(Buffer.from(x, 'utf8'), 'sha256')}'`);
+  if (WRITE && inline.length === 1) {
+    html = html.replace(/'sha256-[A-Za-z0-9+/=]+'|'sha256-PENDING'/, want[0]);
+    fs.writeFileSync(path.join(ROOT, page), html);
   }
+  html = fs.readFileSync(path.join(ROOT, page), 'utf8');
+  const now = (html.match(/script-src ([^;]+)/) || [])[1] || '';
+  check(`${page}: its one inline script is allowed by checksum, and no other inline code is`,
+    inline.length === 1 && now.includes(want[0]) && !now.includes('unsafe-inline'),
+    now.includes(want[0]) ? now : 'checksum out of date — run: node test/vendor.test.mjs --write');
+  const handlers = [...html.matchAll(/\son[a-z]+\s*=\s*["']/g)].map(m => m[0].trim());
+  check(`${page}: no inline event handlers anywhere, markup or generated HTML`, handlers.length === 0, handlers.slice(0, 5).join(' '));
+  const declared = new Set([...html.matchAll(/(?:^|\n)\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1]));
+  const calls = [...html.matchAll(/data-on-[a-z]+="\s*([A-Za-z_$][\w$]*)\s*\(/g)].map(m => m[1]);
+  const unknown = [...new Set(calls.filter(n => !declared.has(n)))];
+  check(`${page}: every data-on-* attribute calls a function the page declares`, unknown.length === 0, unknown.join(', '));
+  if (page === 'index.html') check('index.html: buttons are wired through data-on-* attributes', calls.length > 100, String(calls.length));
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nVendor and security-policy checks passed.');

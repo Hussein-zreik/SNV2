@@ -15,7 +15,7 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 npm install            # devDependencies only; the app's own libraries are checked in under vendor/
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
 npm run test:unit      # 54 engine unit tests (twice: local time + Los Angeles) + 27 vendor/policy checks, ~2s
-npm test               # 168 checks driving the app in headless Chromium, ~70s
+npm test               # 178 checks driving the app in headless Chromium, ~70s
 npm run test:cloud     # 170 checks of firestore.rules, sign-in, roster sync + the staff link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
@@ -49,13 +49,13 @@ version (the cloud tests run those very files). So in the audit the real Excel a
 writers run; only the Firebase files are withheld there (`/vendor/firebase-` is aborted).
 
 **Both pages carry a Content-Security-Policy `<meta>`.** Nothing loads or connects unless
-it is listed: scripts from this site only, connections to `*.googleapis.com` only. If you
-add a resource from somewhere new it will be blocked — and shown in the red problem
-banner — until the policy lists it. `index.html` needs `'unsafe-inline'` for its inline
-`onclick` handlers, so there the policy limits where data can go rather than what can run.
-`request.html` has no inline handlers: its single inline `<script>` is allowed by checksum,
-so **after any edit to that script run `node test/vendor.test.mjs --write`** or the page
-stops working (the test catches it). Do not use `eval`/`new Function` anywhere.
+it is listed: scripts from this site only, connections to `*.googleapis.com` only, and **no
+inline code** except each page's single inline `<script>`, which is allowed by checksum.
+So **after any edit to the inline script of `index.html` or `request.html`, run
+`node test/vendor.test.mjs --write`**, or the page stops working (`test:unit` fails and
+says so). If you add a resource from somewhere new it will be blocked — and shown in the
+red problem banner — until the policy lists it. Do not use `eval`/`new Function`, inline
+`on*=` attributes or `javascript:` URLs anywhere.
 
 ## Architecture
 
@@ -80,9 +80,19 @@ which runs immediately and calls into it.
 One deliberately dense file: markup, CSS custom properties, and the whole UI layer in a
 single inline `<script>`. Splitting it has been considered and rejected. Two consequences:
 
-- **Functions must be global.** ~190 of them are called only from inline `onclick=""`
-  handlers, which ESLint sees as text — hence `no-unused-vars` is off. Do not convert one
-  to a `const` arrow or scope it inside another function.
+- **Buttons are wired with `data-on-<event>="fn(args)"`, never `onclick=`** (audit H3).
+  One dispatcher near the top of the script parses the attribute into a function name and
+  plain values — numbers, quoted text, `true`/`false`/`null`, `this`, `event`,
+  `this.value`, `this.checked` — and calls `window[name]`; nothing is evaluated. Events
+  handled: click, change, keydown, focus, drop, dragstart, dragover, dragend (add a row to
+  `ON_EVENTS` for another). It walks up from the target, so nested handlers run inner
+  first and `event.stopPropagation()` still works, but `event.currentTarget` is the
+  document: pass `this` instead. Anything else (a statement, an expression, a variable)
+  is refused and reported; wrap it in a small named function.
+- **Functions must be global.** ~200 of them are called only from those attributes, which
+  ESLint sees as text — hence `no-unused-vars` is off. Declare them with `function` (a
+  `const` arrow is not on `window`, so the dispatcher cannot find it; `test:unit` checks
+  every `data-on-*` target is declared).
 - **No formatter.** Prettier would produce an unreviewable diff and fight the intended
   compact style. ESLint is scoped to catch bugs a human misses in a file this size
   (typos, duplicate object keys, unreachable code), not to enforce layout.

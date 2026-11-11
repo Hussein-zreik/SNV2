@@ -7,10 +7,9 @@
 // typos in identifiers, duplicate object keys (easy in DAILY_MIN / the registry),
 // unreachable code, self-assignments, duplicate function args, etc.
 //
-// no-unused-vars is OFF: ~190 functions are called only from inline onclick=""
-// handlers in the HTML, which the parser sees as text, so they'd all look unused.
-// Removing that coupling is a Tier-2 task (event delegation); until then the rule
-// is pure noise here.
+// no-unused-vars is OFF: ~200 functions are called only from data-on-* attributes
+// in the HTML (see "buttons without inline code" in index.html), which the parser
+// sees as text, so they would all look unused.
 import js from '@eslint/js';
 import html from 'eslint-plugin-html';
 
@@ -21,7 +20,7 @@ const browser = {
   console: 'readonly', alert: 'readonly', confirm: 'readonly', prompt: 'readonly',
   setTimeout: 'readonly', clearTimeout: 'readonly', setInterval: 'readonly', clearInterval: 'readonly',
   requestAnimationFrame: 'readonly', fetch: 'readonly', crypto: 'readonly',
-  Blob: 'readonly', File: 'readonly', FileReader: 'readonly', URL: 'readonly', Image: 'readonly',
+  Blob: 'readonly', File: 'readonly', Element: 'readonly', FileReader: 'readonly', URL: 'readonly', Image: 'readonly',
   structuredClone: 'readonly', getComputedStyle: 'readonly', matchMedia: 'readonly',
   TextEncoder: 'readonly', TextDecoder: 'readonly', btoa: 'readonly', atob: 'readonly',
   // CDN libs loaded via <script> tags
