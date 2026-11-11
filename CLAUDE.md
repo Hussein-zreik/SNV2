@@ -15,10 +15,14 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
 npm run test:unit      # 53 engine unit tests in plain Node, ~0.5s
-npm test               # 112 checks driving the app in headless Chromium, ~40s
+npm test               # 118 checks driving the app in headless Chromium, ~40s
+npm run test:cloud     # 110 checks of firestore.rules + the staff request link, in the
+                       # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
 
-Run all three before committing; CI (`.github/workflows/test.yml`) runs exactly these on
+Run the first three before committing, and `test:cloud` as well after touching
+`firestore.rules`, `request.html` or the cloud code in `index.html`; CI
+(`.github/workflows/test.yml`) runs all four on
 push to `main` and on PRs, after `npm ci` — `package-lock.json` is committed, so update it
 (`npm install`) in the same commit as any `package.json` change.
 
@@ -74,7 +78,8 @@ single inline `<script>`. Splitting it has been considered and rejected. Two con
 
 `engine.test.mjs` is the fast net over scheduling rules. `audit.mjs` drives the real app
 in Chromium and covers what the engine cannot: persistence, the state registry, undo,
-import/export, and "no page errors".
+import/export, and "no page errors". `cloud.mjs` covers what needs a database: the
+security rules caller by caller, and the staff request link through both pages.
 
 ## The three ideas you need before changing anything
 
@@ -241,6 +246,36 @@ sweep, `git stash pop`. Count the three things that matter: nurses off the 4/3 o
 nurses working 4+ days in a row, and nights staffed below the minimum. A change that fixes
 one rule by quietly loosening another will otherwise look like a success.
 
+## Staff request link (`request.html`)
+
+A second, standalone page for staff: `request.html?f=<form id>`. They pick their name,
+day(s) from tomorrow onward and a reason, and send a **Req off** — nothing else. The
+manager reads the result in **Staff requests** (`openStaffReq()`), a reference list that
+**never changes the roster** (no `overrides`, no history entry).
+
+- **Data:** `requestForms/{formId}` = `{owner, open, title, anchor, ids[], names[],
+  updatedAt}`; `requestForms/{formId}/requests/{auto}` = `{rnId, name, dates:'iso,iso',
+  reason, createdAt, done?}`. The form id is 28 random characters and is **not** the unit
+  code. The form belongs to the manager's account (found by `where('owner','==',uid)`),
+  so it is **not** in `PERSIST` — undo, backups and the roster sync never touch it.
+- **Who may do what is in `firestore.rules`, not in the pages.** Link holders can `get`
+  the form and `create` a request; only the password-account owner can read, tick
+  `done`, delete, pause (`open:false`) or replace the form. Change the rules and
+  `test/cloud.mjs` together.
+- **Two sign-ins.** `initCloud()` is driven by `onAuthStateChanged`: anonymous by
+  default, replaced by the manager's email/password session, restored on sign-out.
+  Never call `signInAnonymously()` unconditionally — it would log the manager out.
+- **The name list is published from the roster** (`sreqPeople()`: RNs in display order,
+  then support staff) by `sreqPublish()`, debounced from `saveState()`.
+- **Everything received is untrusted** — `sreqClean()` then `escapeHtml()`, and the name
+  shown is the roster's (by `rnId`), not the one that was sent. `request.html` uses
+  `textContent` only.
+- **Dates are local calendar days on both pages** (`fromIso`, `new Date(k+'T00:00:00')`),
+  never `new Date('YYYY-MM-DD')`, which is UTC and lands a day early west of Greenwich.
+- `test/cloud.mjs` serves the same SDK version from `node_modules/firebase` in place of
+  the CDN, patched to point at the emulators — keep the `firebase` devDependency on the
+  exact version in the `<script>` tags.
+
 ## Stale documentation
 
 `NIGHT_SHIFT_ROTATION.md` describes an **older** night rotation (pairs advancing by 2
@@ -252,7 +287,7 @@ Settings → Night cycle. Treat that file as historical; trust `engine.js` and
 ## Security
 
 `SECURITY.md` and `firestore.rules` are the complete setup for the Firebase-backed cloud
-sync. The rules file is **not** applied by anything in this repo — it must be pasted into
+sync and the staff request link. The rules file is **not** applied by anything in this repo — it must be pasted into
 the Firebase console and published by hand, and the account and membership steps in
 `SECURITY.md` have to be done in order. Do not describe the cloud data as protected until
 those steps have actually been carried out.

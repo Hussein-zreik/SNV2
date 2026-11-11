@@ -757,6 +757,40 @@ for (const [k, ok] of Object.entries(reg2.roundTrip))
   check('sync field survives save->load: ' + k, ok === true);
 check('undo restores every field', reg2.undoReverted === true);
 
+/* ---------------- 4c. staff requests window (the cloud side is test/cloud.mjs) ---------------- */
+const sreq = await page.evaluate(() => {
+  const out = {};
+  // this audit runs offline, so Firebase never loads: the window must say so, not break
+  openStaffReq();
+  out.offlineMsg = !document.getElementById('sreqOff').hidden && document.getElementById('sreqSignin').hidden &&
+    document.getElementById('sreqMain').hidden && document.getElementById('sreqBadge').hidden;
+  closeStaffReq();
+  // what arrives from the link is untrusted: sreqClean keeps only the expected shape
+  const stamp = { toMillis: () => 1794398400000 };
+  const good = sreqClean('Abc123', { rnId: rid(0), name: 'x', dates: '2026-12-03,2026-12-01,2026-12-02,2026-12-05', reason: 'exam', createdAt: stamp });
+  out.clean = !!good && good.dates.join() === '2026-12-01,2026-12-02,2026-12-03,2026-12-05' && good.done === false && good.at === 1794398400000;
+  out.label = good ? sreqDatesLabel(good.dates) : '';
+  out.rejects = [
+    sreqClean('bad id!', { rnId: rid(0), dates: '2026-12-01', reason: 'x' }),
+    sreqClean('Abc123', { rnId: '"><img>', dates: '2026-12-01', reason: 'x' }),
+    sreqClean('Abc123', { rnId: rid(0), dates: 'tomorrow', reason: 'x' }),
+    sreqClean('Abc123', { rnId: rid(0), dates: '2026-13-45', reason: 'x' }),
+    sreqClean('Abc123', null)
+  ].every(r => r === null);
+  const big = sreqClean('Abc123', { rnId: rid(0), name: 'n'.repeat(500), reason: 'r'.repeat(900), done: 'yes',
+    dates: Array.from({ length: 30 }, (_, i) => `2027-01-${String(i + 1).padStart(2, '0')}`).join(','), createdAt: 'now' });
+  out.bounded = !!big && big.name.length === 120 && big.reason.length === 300 && big.dates.length === 14 && big.done === false && big.at === 0;
+  out.gone = sreqName({ rnId: 'nobody', name: 'Old Name' });
+  return out;
+});
+console.log('\n--- staff requests window ---');
+check('without a connection the window explains itself', sreq.offlineMsg === true);
+check('a received request is reduced to its expected shape', sreq.clean === true);
+check('consecutive days are labelled as a range', sreq.label === 'Tue 01 Dec – Thu 03 Dec, Sat 05 Dec 2026', sreq.label);
+check('malformed requests are dropped', sreq.rejects === true);
+check('oversized fields are cut to their limits', sreq.bounded === true);
+check('a request for someone no longer on the roster says so', sreq.gone === 'Old Name (no longer on the roster)', sreq.gone);
+
 /* ---------------- 5. no runtime errors ---------------- */
 console.log('\n--- runtime ---');
 check('no page errors', pageErrors.length === 0, pageErrors.join(' | '));

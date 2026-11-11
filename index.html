@@ -382,6 +382,22 @@ tbody td.sh-cell.is-today .sc.s-OFF{background:transparent}
 .req-row .rr-del{cursor:pointer;color:var(--neg);font-size:var(--fs-md);line-height:1;padding:0 4px;border:none;background:none}
 .req-empty{padding:var(--sp-4);text-align:center;color:var(--muted-3);font-size:var(--fs-sm)}
 .req-note{font-size:var(--fs-xs);color:var(--muted-2);margin-top:10px;line-height:var(--lh-normal)}
+/* staff requests (received through request.html) */
+.sreq-badge{display:inline-block;min-width:18px;padding:1px 5px;border-radius:9px;background:var(--neg);color:#fff;font-size:11px;font-weight:600;font-family:var(--font-mono);line-height:16px;text-align:center}
+.sreq-badge[hidden],#sreqModal [hidden]{display:none!important}
+.sreq-link{display:flex;gap:var(--sp-2);flex-wrap:wrap;align-items:center}
+.sreq-link .ninput{flex:1;min-width:220px;margin:0;font-family:var(--font-mono);font-size:var(--fs-xs)}
+.sreq-state{font-size:var(--fs-xs);color:var(--muted-2);margin-top:8px;line-height:var(--lh-normal)}
+.sreq-state b.on{color:var(--pos)}.sreq-state b.off{color:var(--warn)}
+.sreq-msg{font-size:var(--fs-xs);color:var(--muted-2);align-self:center}
+.sreq-msg.bad{color:var(--neg);font-weight:500}
+.sreq-row{flex-wrap:wrap;align-items:baseline;row-gap:3px}
+.sreq-row input[type=checkbox]{width:16px;height:16px;cursor:pointer;align-self:center}
+.sreq-row .sreq-at{margin-left:auto}
+.sreq-row .sreq-why{flex-basis:100%;padding-left:26px;color:var(--text-2);font-size:var(--fs-sm);white-space:pre-wrap;overflow-wrap:anywhere}
+.sreq-row.done{opacity:.55}
+.sreq-row.done .rr-rn{text-decoration:line-through}
+.sreq-filter{margin-left:auto;font-size:var(--fs-xs);color:var(--muted-2);font-weight:400;display:flex;align-items:center;gap:5px;cursor:pointer}
 .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:var(--sp-4)}
 .mopts{margin-bottom:var(--sp-4)}
 .mgroup{margin-bottom:10px}
@@ -589,6 +605,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       </button>
       <button class="btn ghost" onclick="openRequests()" title="Enter requested duties, offs and vacations — the schedule adapts around them">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="btxt">Requests</span>
+      </button>
+      <button class="btn ghost" id="sreqBtn" onclick="openStaffReq()" title="Requests staff sent through the request link — a reference list">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="btxt">Staff requests</span><span class="sreq-badge" id="sreqBadge" hidden></span>
       </button>
       <button class="btn ghost" onclick="openReport()" title="Generate a monthly duty report">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg><span class="btxt">Report</span>
@@ -840,6 +859,65 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
         </button>
         <button class="btn accent" onclick="closeRequests()">Close</button>
       </span>
+    </div>
+  </div>
+</div>
+<div class="modal-wrap" id="sreqModal">
+  <div class="modal report-modal">
+    <div class="report-head">
+      <h3 style="margin:0">Staff requests</h3>
+      <span class="sreq-msg" id="sreqWho"></span>
+    </div>
+    <div class="req-empty" id="sreqOff" hidden>The staff request link needs an internet connection (Firebase could not be loaded). Check the connection and reload the page.</div>
+    <!-- not signed in as the manager -->
+    <div class="req-form" id="sreqSignin" hidden>
+      <div class="req-note" style="margin:0 0 10px">Staff send a <b>Req off</b> with a reason through a link you share. What they send is private: only the manager account can read it. Sign in with the manager email and password created in the Firebase console (SECURITY.md, “Staff request link”).</div>
+      <div class="req-line">
+        <label class="req-lbl">Manager email
+          <input class="ninput" id="sreqEmail" type="email" autocomplete="username" style="margin:0" onkeydown="if(event.key==='Enter')sreqSignIn()">
+        </label>
+        <label class="req-lbl">Password
+          <input class="ninput" id="sreqPw" type="password" autocomplete="current-password" style="margin:0" onkeydown="if(event.key==='Enter')sreqSignIn()">
+        </label>
+      </div>
+      <div class="mactions" style="justify-content:flex-start">
+        <button class="btn accent" id="sreqSigninBtn" onclick="sreqSignIn()">Sign in</button>
+        <span class="sreq-msg" id="sreqSigninMsg" role="status"></span>
+      </div>
+    </div>
+    <!-- signed in -->
+    <div id="sreqMain" hidden>
+      <div class="req-form">
+        <div id="sreqSetup" hidden>
+          <label class="req-lbl">Ward or unit name <span style="font-weight:400;color:var(--muted-3)">(shown to staff at the top of the request page)</span>
+            <input class="ninput" id="sreqTitle" type="text" maxlength="60" placeholder="e.g. PACU" style="margin:0">
+          </label>
+          <div class="mactions" style="justify-content:flex-start;margin-top:10px">
+            <button class="btn accent" onclick="sreqCreate()">Create the staff link</button>
+            <span class="sreq-msg" id="sreqSetupMsg" role="status"></span>
+          </div>
+        </div>
+        <div id="sreqLinkBox" hidden>
+          <div class="req-days-lbl">Link to send to staff</div>
+          <div class="sreq-link">
+            <input class="ninput" id="sreqUrl" type="text" readonly onfocus="this.select()" aria-label="Staff request link">
+            <button class="btn accent" onclick="sreqCopy()">Copy link</button>
+            <button class="btn" id="sreqPauseBtn" onclick="sreqToggleOpen()">Pause</button>
+            <button class="btn danger" onclick="sreqNewLink()" title="Stop the current link and make a new one">New link</button>
+          </div>
+          <div class="sreq-state" id="sreqStateMsg"></div>
+        </div>
+      </div>
+      <div class="req-list-h">Received <span id="sreqCount" class="req-count"></span>
+        <label class="sreq-filter"><input type="checkbox" id="sreqShowDone" onchange="renderStaffReqList()"> Show done</label>
+      </div>
+      <div class="report-body" id="sreqList" style="max-height:38vh"></div>
+      <div class="req-note">A reference list only — nothing here changes the roster. To grant a request, add it in the <b>Requests</b> window, then tick it here as done.</div>
+    </div>
+    <div class="mactions" style="margin-top:1rem;justify-content:space-between">
+      <button class="btn" id="sreqSignoutBtn" onclick="sreqSignOut()" hidden>Sign out</button>
+      <span></span>
+      <button class="btn accent" onclick="closeStaffReq()">Close</button>
     </div>
   </div>
 </div>
@@ -1322,6 +1400,7 @@ function saveState(){
   }catch(e){ok=false;}
   setSaveFailed(!ok);
   if(typeof cloudSave==='function')cloudSave(); // mirror to the cloud when connected
+  if(typeof sreqQueuePublish==='function')sreqQueuePublish(); // keep the staff link's name list current
 }
 // A failed save must never be silent: the work exists only on screen until it is
 // exported. Shows a fixed red warning (and a toast the moment it starts failing).
@@ -1408,17 +1487,27 @@ function initCloud(){
   }
   try{ if(!firebase.apps.length)firebase.initializeApp(firebaseConfig); cloudDb=firebase.firestore(); }
   catch(e){ cloudStatus='unavailable';updateCloudUI();return; }
-  // Sign in anonymously so the Firestore rules can require an authenticated
-  // user (see firestore.rules + SECURITY.md). This is deliberately non-blocking:
-  // if Anonymous sign-in isn't enabled in the Firebase console yet, sync keeps
-  // working exactly as before instead of breaking — it just stays unprotected,
-  // which the Cloud panel reports.
+  // Every device is signed in, so the Firestore rules can require an authenticated
+  // user (see firestore.rules + SECURITY.md): anonymously by default, or as the
+  // manager (email + password) once they sign in from the Staff requests window.
+  // Driven by the auth state, so the anonymous sign-in never replaces a manager
+  // session and comes back after a sign-out. Deliberately non-blocking: if
+  // Anonymous sign-in isn't enabled in the Firebase console yet, sync keeps working
+  // as before — it just stays unprotected, which the Cloud panel reports.
   try{
     if(firebase.auth){
       cloudAuth='pending';
-      firebase.auth().signInAnonymously()
-        .then(()=>{cloudAuth='ok';updateCloudUI();})
-        .catch(err=>{cloudAuth='off';console.warn('Cloud auth unavailable ('+(err&&err.code)+') — enable Anonymous sign-in in the Firebase console to secure the database');updateCloudUI();});
+      firebase.auth().onAuthStateChanged(user=>{
+        if(!user){
+          sreqSetManager(null);
+          firebase.auth().signInAnonymously()
+            .catch(err=>{cloudAuth='off';console.warn('Cloud auth unavailable ('+(err&&err.code)+') — enable Anonymous sign-in in the Firebase console to secure the database');updateCloudUI();});
+          return;
+        }
+        cloudAuth='ok';updateCloudUI();
+        if(unitCode&&cloudStatus==='error')connectCloud(unitCode);   // a listener refused while signed out
+        sreqSetManager(user.isAnonymous?null:user);
+      });
     }
   }catch(e){cloudAuth='off';}
   try{ const saved=localStorage.getItem('rn_unit'); if(saved)connectCloud(saved); else updateCloudUI(); }
@@ -1483,6 +1572,252 @@ function updateCloudUI(){
 function openCloud(){updateCloudUI();const inp=document.getElementById('unitInput');if(inp)inp.value=unitCode;document.getElementById('cloudModal').classList.add('open');}
 function closeCloud(){document.getElementById('cloudModal').classList.remove('open');}
 function connectFromInput(){const c=sanitizeCode(document.getElementById('unitInput').value);if(!c){toast('Enter a unit code first');return;}connectCloud(c);toast('Cloud sync on · '+c);}
+
+/* ---------- staff request link (request.html) ---------- */
+// Staff open request.html?f=<form id>, pick their name and day(s) and SEND a Req off
+// with a reason. firestore.rules lets that page create a request and nothing else;
+// only the manager account (email + password) that created the form can read what
+// arrives. This window is that reader. It is a reference list: nothing here touches
+// the roster, and none of it is persisted state — the form belongs to the manager's
+// account, so there is no PERSIST row. Everything received is untrusted: it goes
+// through sreqClean() and is escaped where it is shown.
+let mgrUser=null;                 // the signed-in manager account, else null
+let sreqForm=null;                // {id,open,title} once this manager's form is loaded
+let sreqItems=[];                 // requests received, newest first (already cleaned)
+let sreqState='idle';             // idle | loading | ready | error
+let sreqUnsub=null,sreqPubTimer=null,sreqPublished='';
+const SREQ_FORM_RE=/^[A-Za-z0-9]{20,40}$/,SREQ_DOC_RE=/^[A-Za-z0-9]{1,40}$/;
+// called on every sign-in / sign-out (see initCloud)
+function sreqSetManager(user){
+  if(user&&mgrUser&&user.uid===mgrUser.uid)return;
+  if(sreqUnsub){sreqUnsub();sreqUnsub=null;}
+  clearTimeout(sreqPubTimer);
+  mgrUser=user||null;sreqForm=null;sreqItems=[];sreqPublished='';
+  sreqState=mgrUser?'loading':'idle';
+  if(mgrUser)sreqLoadForm();
+  renderStaffReq();
+}
+// who staff can pick: RNs in display order, then support staff — as in the Requests window
+function sreqPeople(){
+  normalizeOrder();ensureStaff();
+  const p=order.map(i=>({id:String(rid(i)),name:String(names[i]==null?'':names[i]).trim().slice(0,120)}));
+  for(const g of STAFF_GROUPS)for(const s of staffOf(g.key))p.push({id:String(s.id),name:String(s.name==null?'':s.name).trim().slice(0,120)});
+  return p.filter(x=>ID_RE.test(x.id)&&x.name).slice(0,200);
+}
+function sreqDoc(open,title){
+  const p=sreqPeople();
+  return {owner:mgrUser.uid,open:!!open,title:String(title||'').trim().slice(0,60),anchor:cycleStartISO(0),
+    ids:p.map(x=>x.id),names:p.map(x=>x.name),updatedAt:Date.now()};
+}
+const sreqSig=d=>JSON.stringify([d.open===true,d.title,d.anchor,d.ids,d.names]);
+function sreqLoadForm(){
+  const uid=mgrUser.uid;
+  cloudDb.collection('requestForms').where('owner','==',uid).get().then(snap=>{
+    if(!mgrUser||mgrUser.uid!==uid)return;
+    let best=null;                                    // one form per manager; newest if ever more
+    snap.forEach(d=>{const v=d.data()||{},at=numOr(v.updatedAt,0,0,Infinity);
+      if(SREQ_FORM_RE.test(d.id)&&(!best||at>best.at))best={id:d.id,at,v};});
+    if(best){
+      sreqForm={id:best.id,open:best.v.open===true,title:String(best.v.title||'').slice(0,60)};
+      sreqPublished=sreqSig(best.v);
+      sreqListen();sreqPublish();
+    }else sreqState='ready';
+    renderStaffReq();
+  }).catch(err=>{
+    if(!mgrUser||mgrUser.uid!==uid)return;
+    console.error('staff requests',err);sreqState='error';renderStaffReq();
+  });
+}
+function sreqClean(id,d){
+  if(!isObj(d)||!SREQ_DOC_RE.test(String(id))||!ID_RE.test(String(d.rnId)))return null;
+  const dates=[...new Set(String(d.dates==null?'':d.dates).split(','))].filter(k=>ISO_RE.test(k)&&!isNaN(new Date(k+'T00:00:00'))).sort().slice(0,14);
+  if(!dates.length)return null;
+  const at=d.createdAt&&typeof d.createdAt.toMillis==='function'?numOr(d.createdAt.toMillis(),0,0,Infinity):0;
+  return {id:String(id),rnId:String(d.rnId),name:String(d.name==null?'':d.name).slice(0,120),dates,
+    reason:String(d.reason==null?'':d.reason).slice(0,300),at,done:d.done===true};
+}
+function sreqListen(){
+  if(sreqUnsub){sreqUnsub();sreqUnsub=null;}
+  const id=sreqForm.id;sreqState='loading';
+  sreqUnsub=cloudDb.collection('requestForms').doc(id).collection('requests').orderBy('createdAt','desc').limit(500)
+    .onSnapshot(snap=>{
+      if(!sreqForm||sreqForm.id!==id)return;
+      const first=sreqState!=='ready',had=new Set(sreqItems.map(r=>r.id));
+      sreqItems=snap.docs.map(d=>sreqClean(d.id,d.data())).filter(Boolean);
+      sreqState='ready';
+      if(!first&&sreqItems.some(r=>!had.has(r.id)))toast('New staff request received');
+      renderStaffReq();
+    },err=>{
+      console.error('staff requests',err);
+      if(sreqForm&&sreqForm.id===id){sreqState='error';renderStaffReq();}
+    });
+}
+// keep the form's name list, fortnight anchor and title in step with the roster
+function sreqPublish(){
+  if(!mgrUser||!sreqForm||!cloudDb)return;
+  const id=sreqForm.id,d=sreqDoc(sreqForm.open,sreqForm.title),sig=sreqSig(d);
+  if(sig===sreqPublished||!d.ids.length)return;
+  cloudDb.collection('requestForms').doc(id).set(d)
+    .then(()=>{if(sreqForm&&sreqForm.id===id)sreqPublished=sig;})
+    .catch(err=>console.error('staff link update failed',err));
+}
+function sreqQueuePublish(){
+  if(!mgrUser||!sreqForm)return;
+  clearTimeout(sreqPubTimer);sreqPubTimer=setTimeout(sreqPublish,1500);
+}
+function sreqNewId(){
+  const A='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',b=new Uint8Array(28);
+  crypto.getRandomValues(b);return Array.from(b,x=>A[x%A.length]).join('');
+}
+function sreqSay(elId,text,bad){const m=document.getElementById(elId);if(m){m.textContent=text;m.className='sreq-msg'+(bad?' bad':'');}}
+function sreqCreate(){
+  if(!mgrUser||!cloudDb)return Promise.resolve();
+  const id=sreqNewId(),d=sreqDoc(true,document.getElementById('sreqTitle').value);
+  if(!d.ids.length){sreqSay('sreqSetupMsg','Add at least one named RN to the roster first.',true);return Promise.resolve();}
+  sreqSay('sreqSetupMsg','Creating…');
+  return cloudDb.collection('requestForms').doc(id).set(d).then(()=>{
+    sreqForm={id,open:true,title:d.title};sreqPublished=sreqSig(d);sreqItems=[];
+    sreqSay('sreqSetupMsg','');sreqListen();renderStaffReq();toast('Staff link created');
+  }).catch(err=>{
+    console.error('staff link',err);
+    sreqSay('sreqSetupMsg','Could not create the link. Check the connection, and that the rules in firestore.rules are published (SECURITY.md).',true);
+  });
+}
+function sreqToggleOpen(){
+  if(!mgrUser||!sreqForm)return;
+  const id=sreqForm.id,open=!sreqForm.open,d=sreqDoc(open,sreqForm.title);
+  if(!d.ids.length)return;
+  cloudDb.collection('requestForms').doc(id).set(d).then(()=>{
+    if(!sreqForm||sreqForm.id!==id)return;
+    sreqForm.open=open;sreqPublished=sreqSig(d);renderStaffReq();
+    toast(open?'Staff link is open again':'Staff link paused');
+  }).catch(err=>{console.error('staff link',err);toast('Could not change the link — check the connection');});
+}
+function sreqNewLink(){
+  if(!mgrUser||!sreqForm)return;
+  const n=sreqItems.length;
+  if(!confirm('Make a new staff link?\n\nThe current link stops working'+
+    (n?` and the ${n} request${n>1?'s':''} received through it ${n>1?'are':'is'} deleted from this list`:'')+
+    '. You will have to send the new link to your staff.\n\nThis cannot be undone.'))return;
+  const old=cloudDb.collection('requestForms').doc(sreqForm.id),title=sreqForm.title;
+  if(sreqUnsub){sreqUnsub();sreqUnsub=null;}
+  // requests first: the rules only let them be removed while their form still exists
+  old.collection('requests').get()
+    .then(snap=>Promise.all(snap.docs.map(d=>d.ref.delete())))
+    .then(()=>old.delete())
+    .then(()=>{
+      sreqForm=null;sreqItems=[];sreqPublished='';sreqState='ready';
+      document.getElementById('sreqTitle').value=title;
+      return sreqCreate();
+    })
+    .catch(err=>{
+      console.error('staff link',err);toast('Could not replace the link — check the connection');
+      if(sreqForm)sreqListen();
+      renderStaffReq();
+    });
+}
+function sreqRef(id){return cloudDb.collection('requestForms').doc(sreqForm.id).collection('requests').doc(id);}
+function sreqSetDone(id,v){
+  if(!mgrUser||!sreqForm||!SREQ_DOC_RE.test(String(id)))return;
+  sreqRef(id).update({done:!!v}).catch(err=>{console.error('staff request',err);toast('Could not save — check the connection');renderStaffReqList();});
+}
+function sreqDelete(id){
+  if(!mgrUser||!sreqForm||!SREQ_DOC_RE.test(String(id)))return;
+  const r=sreqItems.find(x=>x.id===id);if(!r)return;
+  if(!confirm(`Delete the request from ${sreqName(r)} (${sreqDatesLabel(r.dates)})?\n\nThis cannot be undone.`))return;
+  sreqRef(id).delete().catch(err=>{console.error('staff request',err);toast('Could not delete — check the connection');});
+}
+function sreqSignIn(){
+  const btn=document.getElementById('sreqSigninBtn');
+  const email=document.getElementById('sreqEmail').value.trim(),pw=document.getElementById('sreqPw').value;
+  if(!email||!pw){sreqSay('sreqSigninMsg','Enter the manager email and password.',true);return;}
+  if(!cloudDb||!window.firebase||!firebase.auth){sreqSay('sreqSigninMsg','Cloud unavailable — check the connection and reload.',true);return;}
+  btn.disabled=true;sreqSay('sreqSigninMsg','Signing in…');
+  firebase.auth().signInWithEmailAndPassword(email,pw).then(()=>{
+    document.getElementById('sreqPw').value='';sreqSay('sreqSigninMsg','');
+  }).catch(err=>{
+    const c=(err&&err.code)||'';
+    sreqSay('sreqSigninMsg',
+      c==='auth/operation-not-allowed'?'Email/Password sign-in is not switched on in the Firebase console yet (SECURITY.md).':
+      c==='auth/too-many-requests'?'Too many attempts. Wait a few minutes and try again.':
+      c==='auth/network-request-failed'?'No connection. Check the internet and try again.':
+      c==='auth/invalid-email'?'That email address is not valid.':
+      'Email or password is not correct.',true);
+  }).then(()=>{btn.disabled=false;});
+}
+function sreqSignOut(){if(window.firebase&&firebase.auth)firebase.auth().signOut().catch(()=>{});}
+function sreqUrl(){return new URL('request.html?f='+sreqForm.id,location.href).href;}
+function sreqCopy(){
+  const inp=document.getElementById('sreqUrl'),done=()=>toast('Link copied — send it to your staff');
+  const legacy=()=>{inp.focus();inp.select();try{document.execCommand('copy');done();}catch(e){toast('Select the link and copy it');}};
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(inp.value).then(done,legacy);else legacy();
+}
+// the RN's current roster name; what staff sent is only a fallback
+function sreqName(r){
+  const i=idxOfId(r.rnId);if(i>=0)return names[i];
+  const p=staff.find(x=>x.id===r.rnId);if(p)return p.name;
+  return (r.name||'Unknown')+' (no longer on the roster)';
+}
+// 'Mon 16 Nov – Wed 18 Nov, Fri 20 Nov 2026' — consecutive days read as one range
+function sreqDatesLabel(dates){
+  const ds=dates.map(k=>new Date(k+'T00:00:00')).filter(d=>!isNaN(d)).sort((a,b)=>a-b),out=[];
+  const lab=d=>`${DAYS[(d.getDay()+6)%7]} ${fmt(d)}`;
+  for(let i=0;i<ds.length;){
+    let j=i;while(j+1<ds.length&&Math.round((ds[j+1]-ds[j])/86400000)===1)j++;
+    out.push(j>i?`${lab(ds[i])} – ${lab(ds[j])}`:lab(ds[i]));i=j+1;
+  }
+  return out.join(', ')+(ds.length?' '+ds[ds.length-1].getFullYear():'');
+}
+function openStaffReq(){renderStaffReq();sreqPublish();document.getElementById('sreqModal').classList.add('open');}
+function closeStaffReq(){document.getElementById('sreqModal').classList.remove('open');}
+function renderStaffReq(){
+  const el=id=>document.getElementById(id),badge=el('sreqBadge');if(!badge)return;
+  const fresh=sreqItems.filter(r=>!r.done).length;
+  badge.hidden=!(mgrUser&&fresh);badge.textContent=fresh>99?'99+':String(fresh);
+  const off=!cloudDb||!window.firebase||!firebase.auth;
+  el('sreqOff').hidden=!off;
+  el('sreqSignin').hidden=off||!!mgrUser;
+  el('sreqMain').hidden=off||!mgrUser;
+  el('sreqSignoutBtn').hidden=!mgrUser;
+  el('sreqWho').textContent=mgrUser?'Signed in as '+(mgrUser.email||'manager'):'';
+  if(off||!mgrUser)return;
+  el('sreqSetup').hidden=!!sreqForm||sreqState!=='ready';
+  el('sreqLinkBox').hidden=!sreqForm;
+  if(sreqForm){
+    el('sreqUrl').value=sreqUrl();
+    el('sreqPauseBtn').textContent=sreqForm.open?'Pause':'Resume';
+    const n=sreqPeople().length;
+    el('sreqStateMsg').innerHTML=(sreqForm.open?'<b class="on">Open</b> — staff can send requests.':'<b class="off">Paused</b> — staff see “Requests are closed”.')+
+      ` ${n} name${n===1?'':'s'} on the list (RNs and support staff, kept up to date automatically). Anyone who has the link can see those names, so send it to your staff only.`+
+      (location.protocol==='file:'?' <b class="off">This copy of the app was opened from a file, so the link only works on this computer — open the app from its web address to get a link you can send.</b>':'');
+  }
+  renderStaffReqList();
+}
+function renderStaffReqList(){
+  const box=document.getElementById('sreqList');if(!box)return;
+  const showDone=document.getElementById('sreqShowDone').checked;
+  const fresh=sreqItems.filter(r=>!r.done).length,done=sreqItems.length-fresh;
+  document.getElementById('sreqCount').textContent=sreqItems.length?`(${fresh} new${done?` · ${done} done`:''})`:'';
+  if(sreqState==='loading'){box.innerHTML='<div class="req-empty">Loading…</div>';return;}
+  if(sreqState==='error'){box.innerHTML='<div class="req-empty">Could not load staff requests. Check the internet connection, and that the rules in firestore.rules are published in the Firebase console (SECURITY.md).</div>';return;}
+  if(!sreqForm){box.innerHTML='<div class="req-empty">No staff link yet. Create one above, then send it to your staff.</div>';return;}
+  const rows=sreqItems.filter(r=>showDone||!r.done);
+  if(!rows.length){
+    box.innerHTML=`<div class="req-empty">${sreqItems.length?'Every request is ticked as done. Tick “Show done” to see them.':'No requests yet. They appear here by themselves as staff send them.'}</div>`;
+    return;
+  }
+  box.innerHTML=rows.map(r=>{
+    const at=r.at?new Date(r.at):null;
+    const when=at?`received ${fmt(at)} ${at.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`:'';
+    return `<div class="req-row sreq-row${r.done?' done':''}">`+
+      `<input type="checkbox"${r.done?' checked':''} onchange="sreqSetDone('${escapeHtml(r.id)}',this.checked)" title="Tick when you have dealt with this request" aria-label="Done">`+
+      `<span class="rr-rn">${escapeHtml(sreqName(r))}</span>`+
+      `<span class="rr-date">${escapeHtml(sreqDatesLabel(r.dates))}</span>`+
+      `<span class="rr-date sreq-at">${escapeHtml(when)}</span>`+
+      `<button class="rr-del" title="Delete this request" aria-label="Delete this request" onclick="sreqDelete('${escapeHtml(r.id)}')">✕</button>`+
+      `<span class="sreq-why">${escapeHtml(r.reason)}</span></div>`;
+  }).join('');
+}
 
 /* ---------- password lock (one fixed password for everyone) ---------- */
 // The only accepted password, stored as a salted SHA-256 hash (not readable).
@@ -3133,7 +3468,7 @@ function saveName(){
 function closeNameM(){document.getElementById('nameModal').classList.remove('open');}
 
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){closeCell();closeNameM();closeHistory();closeReport();closeCloud();}
+  if(e.key==='Escape'){closeCell();closeNameM();closeHistory();closeReport();closeCloud();closeStaffReq();}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();undo();}
 });
 document.querySelectorAll('.modal-wrap').forEach(m=>m.addEventListener('mousedown',e=>{if(e.target===m)m.classList.remove('open');}));
