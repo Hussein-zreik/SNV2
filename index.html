@@ -11,7 +11,7 @@
      (Firebase sign-in and the roster), so a script that got onto the page could not
      send the roster anywhere else. apis.google.com and the firebaseapp.com frame are
      what Firebase sign-in loads on phones. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-s83zv/Be85GS6P/bsCq3Ec7mq8rjwScanH4O224GBSc=' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-hy0AiLyCaNV1/Z3UYqD/q3yBxgVBwN9vdKrGDDqK7xQ=' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RN Rotating Schedule</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -2605,93 +2605,97 @@ function fatigueReport(days,sh){
 // live health-check banner: watches the current schedule (including manual
 // edits) and surfaces staffing-rule problems that aren't otherwise obvious.
 // Display only — it never changes the schedule.
-function renderBanner(){
-  const{days,sh}=sched;
-  const el=document.getElementById('banner');
+// The live health-check banner, in parts (audit M1). Display only: it never changes
+// the schedule. bannerState() handles the fortnights where live checks would mislead;
+// bannerChecks() runs the rules; bannerHint() picks the one most useful hint.
+function bannerState(days,sh){
+  const key=cycleStartISO(cycleOffset);
   // Locked fortnight: a fixed record — say so instead of re-checking live rules
-  const LK=lockedCycles[cycleStartISO(cycleOffset)];
+  const LK=lockedCycles[key];
   if(LK){
     const at=new Date(LK.at);
-    el.className='banner';
-    el.innerHTML=`<span class="bic">🔒</span><div>This fortnight is <b>locked</b>${isNaN(at)?'':` since <b>${fmt(at)} ${at.getFullYear()}</b>`} — view only. It shows exactly what was locked: later changes to rules, requests, the roster or lists don't affect it. Press <b>Locked</b> to unlock.</div>`;
-    return;
+    return {cls:'banner',html:`<span class="bic">🔒</span><div>This fortnight is <b>locked</b>${isNaN(at)?'':` since <b>${fmt(at)} ${at.getFullYear()}</b>`} — view only. It shows exactly what was locked: later changes to rules, requests, the roster or lists don't affect it. Press <b>Locked</b> to unlock.</div>`};
   }
   // Manual mode, empty (ungenerated) fortnight: friendly prompt, no false warnings
-  if(manualMode&&!committedCycles[cycleStartISO(cycleOffset)]){
-    const reqCount=(()=>{let c=0;for(let d=0;d<14;d++){const o=overrides[isoKey(days[d])];if(o)c+=Object.keys(o).length;}return c;})();
-    el.className='banner';
-    el.innerHTML=`<span class="bic">▦</span><div>This fortnight is <b>empty</b>. Add staff requests in <b>Requests</b>${reqCount?` (<b>${reqCount}</b> entered)`:''}, then press <b>Generate</b> to fill it while respecting the rules, turns and requests.</div>`;
-    return;
+  if(manualMode&&!committedCycles[key]){
+    let reqCount=0;for(let d=0;d<14;d++){const o=overrides[isoKey(days[d])];if(o)reqCount+=Object.keys(o).length;}
+    return {cls:'banner',html:`<span class="bic">▦</span><div>This fortnight is <b>empty</b>. Add staff requests in <b>Requests</b>${reqCount?` (<b>${reqCount}</b> entered)`:''}, then press <b>Generate</b> to fill it while respecting the rules, turns and requests.</div>`};
   }
   // Part-generated fortnight (Settings → Generate): the blank parts are reserved,
   // not missing, so say what is in and what is left instead of flagging every
   // reserved night/weekend as short. A week over its split is still flagged.
-  const doneParts=partsDone(cycleStartISO(cycleOffset));
+  const doneParts=partsDone(key);
   if(doneParts.length&&doneParts.length<ALL_UNITS.length){
-    const cr0=conflictReport(cycleOffset,sh);
-    const over=cr0.weekOver.map(o=>`<b>${escapeHtml(names[o.i])}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`);
+    const over=conflictReport(cycleOffset,sh).weekOver.map(o=>`<b>${escapeHtml(names[o.i])}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`);
     const leftU=ALL_UNITS.filter(u=>!doneParts.includes(u)),left=describeUnits(leftU);
-    el.className='banner'+(over.length?' bad':'');
-    el.innerHTML=`<span class="bic">▦</span><div>${over.length?over.join(', ')+' &nbsp;·&nbsp; ':''}Partly generated: <b>${describeUnits(doneParts)}</b>. Still to generate: <b>${left}</b> — tick ${leftU.length>1?'them':'it'} in <b>Settings → Generate</b>, then press <b>Generate</b>. Staffing checks run once every part is in.</div>`;
-    return;
+    return {cls:'banner'+(over.length?' bad':''),html:`<span class="bic">▦</span><div>${over.length?over.join(', ')+' &nbsp;·&nbsp; ':''}Partly generated: <b>${describeUnits(doneParts)}</b>. Still to generate: <b>${left}</b> — tick ${leftU.length>1?'them':'it'} in <b>Settings → Generate</b>, then press <b>Generate</b>. Staffing checks run once every part is in.</div>`};
   }
-  // 1) days below minimum staffing (any shift type under DAILY_MIN)
+  return null;
+}
+function bannerChecks(days,sh){
+  const nm=i=>escapeHtml(names[i]),cr=conflictReport(cycleOffset,sh);
+  // days below minimum staffing (any shift type under DAILY_MIN)
   const short=[];
   for(let d=0;d<14;d++)if(dayShort(sh,d)||nightShort(sh,d))short.push(`${DAYS[d%7]} ${fmt(days[d])}`);
-  // 2) exact-7 breaks, named + flagged when the nurse is on the night turn
-  const cr=conflictReport(cycleOffset,sh);
-  const nm=i=>escapeHtml(names[i]);
-  const overNames=cr.over.map(o=>`${nm(o.i)} (${o.tot}${o.onNight?', nights':''})`);
-  const underNames=cr.under.map(o=>`${nm(o.i)} (${o.tot}${o.onNight?', nights':''})`);
-  const notSeven=cr.over.length+cr.under.length;
-  const nightTurnClash=cr.over.some(o=>o.onNight)||cr.under.some(o=>o.onNight);
   // night-turn nurses whose nights are cancelled by a locked entry
   // (only where the night really is short — the generator backfills most of them)
   const shortNight=new Set(cr.nightsShort.map(x=>x.d));
   const blockers=nightBlockers(cycleOffset).filter(x=>x.blocked.some(d=>shortNight.has(d)));
-  const blockedMsg=blockers.length
-    ? `${blockers.map(x=>`<b>${nm(x.i)}</b> (${x.blocked.length})`).join(', ')} — on the night turn but ${blockers.length>1?'their':'this'} night days carry other entries, so those nights are <b>not staffed</b>. Settings → Night cycle → <b>Free the night turn</b>, or clear them in Requests.`
-    : '';
-  // 3) nurses working more than 3 days in a row
+  // nurses working more than 3 days in a row
   let longRuns=0;
   for(let i=0;i<N;i++)if(maxRunLen(sh[i],WORK_TYPES)>3)longRuns++;
-  // 4) nights off the N7 minimum (below that weekday's minimum, or above the night team)
-  const nightGaps=[...cr.nightsShort,...cr.nightsOver].map(x=>`${DAYS[x.d%7]} ${fmt(days[x.d])}: ${x.c} of ${x.need}`);
-  // 5) advisory fatigue rules (soft warnings — never rule-breaking)
-  const ft=fatigueReport(days,sh);
-  const fatigueParts=[];
+  // advisory fatigue rules (soft warnings — never rule-breaking)
+  const ft=fatigueReport(days,sh),fatigueParts=[];
   if(ft.turn.length)fatigueParts.push(`<b>${ft.turn.length}</b> night→day turnaround${ft.turn.length>1?'s':''}: ${ft.turn.map(nm).join(', ')}`);
   if(ft.overN.length)fatigueParts.push(`<b>${ft.overN.length}</b> over ${fatigue.maxNights} nights/month: ${ft.overN.map(o=>nm(o.i)+' ('+o.n+')').join(', ')}`);
   if(ft.rest.length)fatigueParts.push(`<b>${ft.rest.length}</b> with under ${fatigue.minRest} day${fatigue.minRest>1?'s':''} off between stretches: ${ft.rest.map(nm).join(', ')}`);
-  const anyFatigue=fatigueParts.length>0;
-
-  // 2b) a week over its split (4/3 · 3/4) — the manager entered too many
-  const weekOverMsg=cr.weekOver.map(o=>`<b>${nm(o.i)}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`);
-  if(!short.length&&!notSeven&&!longRuns&&!nightGaps.length&&!anyFatigue&&!blockedMsg&&!weekOverMsg.length){
+  return {
+    short,longRuns,fatigueParts,
+    overNames:cr.over.map(o=>`${nm(o.i)} (${o.tot}${o.onNight?', nights':''})`),     // exact-7 breaks, flagged
+    underNames:cr.under.map(o=>`${nm(o.i)} (${o.tot}${o.onNight?', nights':''})`),    // when on the night turn
+    notSeven:cr.over.length+cr.under.length,
+    nightTurnClash:cr.over.some(o=>o.onNight)||cr.under.some(o=>o.onNight),
+    blockedMsg:blockers.length
+      ? `${blockers.map(x=>`<b>${nm(x.i)}</b> (${x.blocked.length})`).join(', ')} — on the night turn but ${blockers.length>1?'their':'this'} night days carry other entries, so those nights are <b>not staffed</b>. Settings → Night cycle → <b>Free the night turn</b>, or clear them in Requests.`
+      : '',
+    // nights off the N7 minimum (below that weekday's minimum, or above the night team)
+    nightGaps:[...cr.nightsShort,...cr.nightsOver].map(x=>`${DAYS[x.d%7]} ${fmt(days[x.d])}: ${x.c} of ${x.need}`),
+    // a week over its split (4/3 · 3/4) — the manager entered too many
+    weekOverMsg:cr.weekOver.map(o=>`<b>${nm(o.i)}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`)
+  };
+}
+function bannerHint(c){
+  if(c.weekOverMsg.length)return '<div class="bhint">More duties were entered in that week than the 4/3 · 3/4 split allows. Entries are never removed automatically — clear one in <b>Requests</b> or on the grid.</div>';
+  if(c.blockedMsg)return '<div class="bhint">A locked entry sits on a night-turn nurse\'s night day, so that night is not staffed. Use <b>Settings → Night cycle → Free the night turn</b> to clear the day-shift entries that are cancelling it (holidays, vacations and requested days off are kept).</div>';
+  if(c.nightTurnClash)return '<div class="bhint">A named nurse above is on the <b>night turn</b> this fortnight and has a request or manual entry that collides with their nights — an entry on a night day cancels that night, and one that could not be absorbed leaves them off 7. Remove it in <b>Requests</b>, or fix the night cells by hand.</div>';
+  if(c.nightGaps.length)return '<div class="bhint">Nights are manual: assign a replacement yourself by clicking the night cell.</div>';
+  if(c.short.length)return '<div class="bhint">Tip: usually caused by requests that can\'t all be met (e.g. too many off the same day), a manual edit, or an unbalanced A/B group split.</div>';
+  if(c.fatigueParts.length&&!c.longRuns)return '<div class="bhint">These are advisory rest/fatigue warnings — fix by hand, or adjust the limits in <b>Settings → Fatigue rules</b>.</div>';
+  return '';
+}
+function renderBanner(){
+  const{days,sh}=sched,el=document.getElementById('banner');
+  const special=bannerState(days,sh);
+  if(special){el.className=special.cls;el.innerHTML=special.html;return;}
+  const c=bannerChecks(days,sh);
+  const hard=c.short.length||c.notSeven||c.nightGaps.length||c.blockedMsg||c.weekOverMsg.length;
+  if(!hard&&!c.longRuns&&!c.fatigueParts.length){
     el.className='banner ok';
     el.innerHTML='<span class="bic">✓</span><span>All staffing &amp; fatigue rules satisfied.</span>';
     return;
   }
   const parts=[];
-  if(weekOverMsg.length)parts.push(weekOverMsg.join(', '));
-  if(blockedMsg)parts.push(`<b>night turn cancelled</b> for ${blockedMsg}`);
-  if(nightGaps.length)parts.push(`<b>${nightGaps.length}</b> night${nightGaps.length>1?'s':''} off the N7 minimum (${nightGaps.join(', ')})`);
-  if(short.length)parts.push(`<b>${short.length}</b> day${short.length>1?'s':''} below minimum staffing (${short.join(', ')})`);
-  if(overNames.length)parts.push(`<b>${overNames.length}</b> over 7 shifts: ${overNames.join(', ')}`);
-  if(underNames.length)parts.push(`<b>${underNames.length}</b> under 7 shifts: ${underNames.join(', ')}`);
-  if(longRuns)parts.push(`<b>${longRuns}</b> nurse${longRuns>1?'s':''} working 4+ days in a row`);
-  parts.push(...fatigueParts);   // fatigue warnings come last (advisory)
+  if(c.weekOverMsg.length)parts.push(c.weekOverMsg.join(', '));
+  if(c.blockedMsg)parts.push(`<b>night turn cancelled</b> for ${c.blockedMsg}`);
+  if(c.nightGaps.length)parts.push(`<b>${c.nightGaps.length}</b> night${c.nightGaps.length>1?'s':''} off the N7 minimum (${c.nightGaps.join(', ')})`);
+  if(c.short.length)parts.push(`<b>${c.short.length}</b> day${c.short.length>1?'s':''} below minimum staffing (${c.short.join(', ')})`);
+  if(c.overNames.length)parts.push(`<b>${c.overNames.length}</b> over 7 shifts: ${c.overNames.join(', ')}`);
+  if(c.underNames.length)parts.push(`<b>${c.underNames.length}</b> under 7 shifts: ${c.underNames.join(', ')}`);
+  if(c.longRuns)parts.push(`<b>${c.longRuns}</b> nurse${c.longRuns>1?'s':''} working 4+ days in a row`);
+  parts.push(...c.fatigueParts);   // fatigue warnings come last (advisory)
   // hard staffing problems are red (bad); fatigue-only / long-run is amber (warn)
-  const level=(short.length||notSeven||nightGaps.length||blockedMsg||weekOverMsg.length)?'bad':'warn';
-  let hint='';
-  if(weekOverMsg.length)hint='<div class="bhint">More duties were entered in that week than the 4/3 · 3/4 split allows. Entries are never removed automatically — clear one in <b>Requests</b> or on the grid.</div>';
-  else if(blockedMsg)hint='<div class="bhint">A locked entry sits on a night-turn nurse\'s night day, so that night is not staffed. Use <b>Settings → Night cycle → Free the night turn</b> to clear the day-shift entries that are cancelling it (holidays, vacations and requested days off are kept).</div>';
-  else if(nightTurnClash)hint='<div class="bhint">A named nurse above is on the <b>night turn</b> this fortnight and has a request or manual entry that collides with their nights — an entry on a night day cancels that night, and one that could not be absorbed leaves them off 7. Remove it in <b>Requests</b>, or fix the night cells by hand.</div>';
-  else if(nightGaps.length)hint='<div class="bhint">Nights are manual: assign a replacement yourself by clicking the night cell.</div>';
-  else if(short.length)hint='<div class="bhint">Tip: usually caused by requests that can\'t all be met (e.g. too many off the same day), a manual edit, or an unbalanced A/B group split.</div>';
-  else if(anyFatigue&&!longRuns)hint='<div class="bhint">These are advisory rest/fatigue warnings — fix by hand, or adjust the limits in <b>Settings → Fatigue rules</b>.</div>';
-  el.className='banner '+level;
-  el.innerHTML=`<span class="bic">⚠</span><div>${parts.join(' &nbsp;·&nbsp; ')}${hint}</div>`;
+  el.className='banner '+(hard?'bad':'warn');
+  el.innerHTML=`<span class="bic">⚠</span><div>${parts.join(' &nbsp;·&nbsp; ')}${bannerHint(c)}</div>`;
 }
 
 function renderTracker(){
@@ -3997,151 +4001,143 @@ function colL(n){let s='';while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m
 
 function exportExcel(){return withLockedView(exportExcelView);}
 // every read happens before the first await, i.e. inside the locked view
+// The Excel export, in parts (audit M1). X holds the palette and the two style helpers
+// every part uses; each sheet-writer returns the next free row where that matters.
+function xlKit(){
+  const P=XL_PAL[theme==='light'?'light':'dark'];
+  const solid=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
+  const thin={style:'thin',color:{argb:P.border}};
+  return {P,solid,allBorder:{top:thin,left:thin,bottom:thin,right:thin}};
+}
+// a title row merged across `cols` columns
+function xlTitle(ws,X,cols,text){
+  ws.mergeCells(1,1,1,cols);
+  const c=ws.getCell(1,1);c.value=text;
+  c.fill=X.solid(X.P.title);c.font={bold:true,size:13,color:{argb:X.P.titleFg}};
+  return c;
+}
+// a header row of labels on row `r`
+function xlHeader(ws,X,r,labels){
+  labels.forEach((h,c)=>{const cell=ws.getCell(r,c+1);cell.value=h;cell.fill=X.solid(X.P.header);
+    cell.font={bold:true,size:10,color:{argb:X.P.headerFg}};cell.alignment={horizontal:'center'};cell.border=X.allBorder;});
+}
+// one roster line — RN or support staff: name, group, 14 coloured shift cells, and
+// W1/W2/Total as live formulas so the counts follow edits made in Excel. W1/W2 count
+// scheduled ENTRIES (work + Hol/Vac/SL): Off and Req off are words, so both are subtracted.
+function xlRosterRow(ws,X,r,name,group,shifts){
+  const {P,solid,allBorder}=X;
+  const nameC=ws.getCell(r,1);nameC.value=name;nameC.fill=solid(P.grid);
+  nameC.font={color:{argb:P.gridFg},bold:true,size:11};nameC.border=allBorder;
+  const grpC=ws.getCell(r,2);grpC.value=group;grpC.fill=solid(P.grid);
+  if(group!==''){grpC.font={color:{argb:P.gridFg},size:10};grpC.alignment={horizontal:'center'};}
+  grpC.border=allBorder;
+  for(let d=0;d<14;d++){
+    const cell=ws.getCell(r,3+d),s=shifts[d];
+    cell.value=s==='OFF'?'Off':s;cell.alignment={horizontal:'center'};cell.border=allBorder;
+    const sc=P.S[s]||xlCustom(s);
+    if(sc){cell.fill=solid(sc[0]);cell.font={color:{argb:sc[1]},bold:true,size:10};}
+    else if(s==='OFF'){cell.fill=solid(P.grid);cell.font={color:{argb:P.offFg},size:10};}
+    else{cell.fill=solid(P.grid);cell.font={color:{argb:P.gridFg},size:10};}
+  }
+  const w1=`COUNTA(C${r}:I${r})-COUNTIF(C${r}:I${r},"REQ")-COUNTIF(C${r}:I${r},"Off")`;
+  const w2=`COUNTA(J${r}:P${r})-COUNTIF(J${r}:P${r},"REQ")-COUNTIF(J${r}:P${r},"Off")`;
+  [w1,w2,`Q${r}+R${r}`].forEach((f,k)=>{
+    const cell=ws.getCell(r,17+k);cell.value={formula:f};cell.alignment={horizontal:'center'};
+    cell.fill=solid(P.count);cell.font={bold:true,color:{argb:P.countFg}};cell.border=allBorder;
+  });
+}
+// rows after the RNs: day / night / total counts per day column, as live formulas
+function xlDayCounts(ws,X,dayR){
+  const {P,solid,allBorder}=X,ngtR=dayR+1,totR=dayR+2;
+  const label=(r,txt)=>{const c=ws.getCell(r,1);c.value=txt;ws.mergeCells(r,1,r,2);
+    c.fill=solid(P.count);c.font={italic:true,color:{argb:P.countFg},size:10};c.border=allBorder;};
+  label(dayR,'Day shifts');label(ngtR,'Night shifts');label(totR,'Total per day');
+  for(let d=0;d<14;d++){
+    const L=colL(3+d);
+    ws.getCell(dayR,3+d).value={formula:DAY_SHIFT_TYPES.map(t=>`COUNTIF(${L}3:${L}${2+N},"${t}")`).join('+')};
+    ws.getCell(ngtR,3+d).value={formula:`COUNTIF(${L}3:${L}${2+N},"N7")`};
+    ws.getCell(totR,3+d).value={formula:`${L}${dayR}+${L}${ngtR}`};
+    [dayR,ngtR,totR].forEach(r=>{const c=ws.getCell(r,3+d);c.alignment={horizontal:'center'};
+      c.fill=solid(P.count);c.font={color:{argb:P.countFg},size:10};c.border=allBorder;});
+  }
+  return totR;
+}
+// support-staff groups (Nurse Aids, Orderlies, Clerks), each under its own labelled
+// band below the RN block. Manual entries only.
+function xlStaffBands(ws,X,sr,days,NC){
+  const {P,solid,allBorder}=X;
+  ensureStaff();
+  for(const g of STAFF_GROUPS){
+    const gc=ws.getCell(sr,1);gc.value=staffGroupLabel(g.key);ws.mergeCells(sr,1,sr,2);
+    gc.fill=solid(P.header);gc.font={bold:true,size:10,color:{argb:P.headerFg}};
+    gc.alignment={horizontal:'left'};gc.border=allBorder;
+    for(let c=3;c<=NC;c++){const cell=ws.getCell(sr,c);cell.fill=solid(P.header);cell.border=allBorder;}
+    sr++;
+    for(const p of staffOf(g.key)){xlRosterRow(ws,X,sr,p.name,'',days.map(d=>staffShiftAt(p.id,d)));sr++;}
+  }
+  return sr;
+}
+// Sheet 1: the fortnight, RN totals checked against 7 by conditional formatting
+function xlScheduleSheet(wb,X,days,sh,weekStart){
+  const {P}=X,NC=19;                                       // A..S: RN, Group, 14 days, W1, W2, Total
+  const ws=wb.addWorksheet('Schedule',{views:[{state:'frozen',xSplit:2,ySplit:2}]});
+  xlTitle(ws,X,NC,`RN Rotating Schedule  ·  Cycle ${cycleOffset}  ·  ${fmt(weekStart)} – ${fmt(addDays(weekStart,13))}`)
+    .alignment={vertical:'middle',horizontal:'left'};
+  ws.getRow(1).height=22;
+  xlHeader(ws,X,2,['RN','Group',...days.map((d,i)=>`${DAYS[i%7]} ${fmt(d)}`),'W1','W2','Total']);
+  ws.getCell(2,1).alignment={horizontal:'left'};
+  normalizeOrder();
+  order.forEach((i,pos)=>xlRosterRow(ws,X,3+pos,names[i],groups[i],sh[i]));
+  const totR=xlDayCounts(ws,X,3+N);
+  xlStaffBands(ws,X,totR+2,days,NC);                     // one blank row after the counts
+  ws.getColumn(1).width=15;ws.getColumn(2).width=7;
+  for(let d=0;d<14;d++)ws.getColumn(3+d).width=8;
+  ws.getColumn(17).width=5;ws.getColumn(18).width=5;ws.getColumn(19).width=6;
+  // RULE: Total per nurse must equal 7 — auto-flags when you edit any shift
+  ws.addConditionalFormatting({ref:`S3:S${2+N}`,rules:[
+    {type:'cellIs',operator:'notEqual',formulae:['7'],priority:1,
+      style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
+    {type:'cellIs',operator:'equal',formulae:['7'],priority:2,
+      style:{font:{bold:true,color:{argb:P.ok}}}}
+  ]});
+}
+// Sheet 2: leave balances, with used counts pulled live from the Schedule sheet
+function xlBalancesSheet(wb,X){
+  const {P,solid,allBorder}=X;
+  const bs=wb.addWorksheet('Balances',{views:[{state:'frozen',ySplit:2}]});
+  xlTitle(bs,X,9,'Leave balances  (used counts pull live from the Schedule sheet)');bs.getRow(1).height=22;
+  xlHeader(bs,X,2,['RN','Group','Hol balance','Hol used','Hol remaining','Vac balance','Vac used','Vac remaining','SL used']);
+  order.forEach((i,pos)=>{
+    const r=3+pos;
+    const set=(col,val,opt)=>{const c=bs.getCell(r,col);c.value=val;c.border=allBorder;
+      c.fill=solid(P.grid);c.font=Object.assign({color:{argb:P.gridFg},size:10},opt||{});
+      c.alignment={horizontal:col<=2?(col===1?'left':'center'):'center'};return c;};
+    set(1,names[i],{bold:true});set(2,groups[i]);
+    set(3,holBal[i]);
+    set(4,{formula:`COUNTIF(Schedule!C${r}:P${r},"HOL")`});
+    set(5,{formula:`C${r}-D${r}`},{bold:true});
+    set(6,vacBal[i]);
+    set(7,{formula:`COUNTIF(Schedule!C${r}:P${r},"VAC")`});
+    set(8,{formula:`F${r}-G${r}`},{bold:true});
+    // sick leave has no entitlement to draw down — a running count, no "remaining"
+    set(9,{formula:`COUNTIF(Schedule!C${r}:P${r},"SL")`});
+  });
+  [3,4,5,6,7,8,9].forEach(c=>bs.getColumn(c).width=13);bs.getColumn(1).width=15;bs.getColumn(2).width=7;
+  // RULES: remaining < 0 red, low balance amber
+  const low=(ref,upTo)=>bs.addConditionalFormatting({ref,rules:[
+    {type:'cellIs',operator:'lessThan',formulae:['0'],priority:1,style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
+    {type:'cellIs',operator:'between',formulae:['0',upTo],priority:2,style:{fill:solidCF(P.warnBg),font:{color:{argb:P.warnFg}}}}
+  ]});
+  low(`E3:E${2+N}`,'2');low(`H3:H${2+N}`,'3');
+}
 async function exportExcelView(){
   if(!window.ExcelJS){exportCSVView();return;}
   try{
-    const {days,sh,weekStart}=sched;
-    const P=XL_PAL[theme==='light'?'light':'dark'];
-    const solid=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
-    const thin={style:'thin',color:{argb:P.border}};
-    const allBorder={top:thin,left:thin,bottom:thin,right:thin};
+    const {days,sh,weekStart}=sched,X=xlKit();
     const wb=new ExcelJS.Workbook();
     wb.creator='RN Rotating Schedule';wb.created=new Date();
-
-    /* ===== Sheet 1: Schedule ===== */
-    const ws=wb.addWorksheet('Schedule',{views:[{state:'frozen',xSplit:2,ySplit:2}]});
-    const NC=19; // A..S (RN,Group,14 days,W1,W2,Total)
-    // row 1 title
-    ws.mergeCells(1,1,1,NC);
-    const tc=ws.getCell(1,1);
-    tc.value=`RN Rotating Schedule  ·  Cycle ${cycleOffset}  ·  ${fmt(weekStart)} – ${fmt(addDays(weekStart,13))}`;
-    tc.fill=solid(P.title);tc.font={bold:true,size:13,color:{argb:P.titleFg}};
-    tc.alignment={vertical:'middle',horizontal:'left'};
-    ws.getRow(1).height=22;
-    // row 2 header
-    const head=['RN','Group',...days.map((d,i)=>`${DAYS[i%7]} ${fmt(d)}`),'W1','W2','Total'];
-    head.forEach((h,c)=>{const cell=ws.getCell(2,c+1);cell.value=h;cell.fill=solid(P.header);
-      cell.font={bold:true,size:10,color:{argb:P.headerFg}};cell.alignment={horizontal:'center'};cell.border=allBorder;});
-    ws.getCell(2,1).alignment={horizontal:'left'};
-    // data rows 3..(2+N), in display order
-    normalizeOrder();
-    order.forEach((i,pos)=>{
-      const r=3+pos;
-      const nameC=ws.getCell(r,1);nameC.value=names[i];nameC.fill=solid(P.grid);
-      nameC.font={color:{argb:P.gridFg},bold:true,size:11};nameC.border=allBorder;
-      const grpC=ws.getCell(r,2);grpC.value=groups[i];grpC.fill=solid(P.grid);
-      grpC.font={color:{argb:P.gridFg},size:10};grpC.alignment={horizontal:'center'};grpC.border=allBorder;
-      for(let d=0;d<14;d++){
-        const cell=ws.getCell(r,3+d);const s=sh[i][d];
-        cell.value=s==='OFF'?'Off':s;cell.alignment={horizontal:'center'};cell.border=allBorder;
-        const sc=P.S[s]||xlCustom(s);
-        if(sc){cell.fill=solid(sc[0]);cell.font={color:{argb:sc[1]},bold:true,size:10};}
-        else if(s==='OFF'){cell.fill=solid(P.grid);cell.font={color:{argb:P.offFg},size:10};}
-        else{cell.fill=solid(P.grid);cell.font={color:{argb:P.gridFg},size:10};}
-      }
-      // W1 / W2 / Total — live formulas, so the counts follow your edits in Excel.
-      // W1/W2 count scheduled ENTRIES: work shifts + Holiday + Vacation + Sick leave.
-      // Off and Req off are written out as words, so both are subtracted back off.
-      const w1r=`COUNTA(C${r}:I${r})-COUNTIF(C${r}:I${r},"REQ")-COUNTIF(C${r}:I${r},"Off")`;
-      const w2r=`COUNTA(J${r}:P${r})-COUNTIF(J${r}:P${r},"REQ")-COUNTIF(J${r}:P${r},"Off")`;
-      [['Q',w1r],['R',w2r],['S',`Q${r}+R${r}`]].forEach(([col,f],k)=>{
-        const cell=ws.getCell(r,17+k);cell.value={formula:f};cell.alignment={horizontal:'center'};
-        cell.fill=solid(P.count);cell.font={bold:true,color:{argb:P.countFg}};cell.border=allBorder;
-      });
-    });
-    // count rows 22 (day),23 (night),24 (total) — live formulas per day column
-    const dayR=3+N,ngtR=dayR+1,totR=dayR+2;
-    const label=(r,txt)=>{const c=ws.getCell(r,1);c.value=txt;ws.mergeCells(r,1,r,2);
-      c.fill=solid(P.count);c.font={italic:true,color:{argb:P.countFg},size:10};c.border=allBorder;};
-    label(dayR,'Day shifts');label(ngtR,'Night shifts');label(totR,'Total per day');
-    for(let d=0;d<14;d++){
-      const L=colL(3+d);
-      const dayF=DAY_SHIFT_TYPES.map(t=>`COUNTIF(${L}3:${L}${2+N},"${t}")`).join('+');
-      ws.getCell(dayR,3+d).value={formula:dayF};
-      ws.getCell(ngtR,3+d).value={formula:`COUNTIF(${L}3:${L}${2+N},"N7")`};
-      ws.getCell(totR,3+d).value={formula:`${L}${dayR}+${L}${ngtR}`};
-      [dayR,ngtR,totR].forEach(r=>{const c=ws.getCell(r,3+d);c.alignment={horizontal:'center'};
-        c.fill=solid(P.count);c.font={color:{argb:P.countFg},size:10};c.border=allBorder;});
-    }
-    // ===== support-staff groups (Nurse Aids, Orderlies, Clerks) =====
-    // appended below the RN block, each group under its own labelled band, with
-    // live W1/W2/Total formulas like the RN rows. Manual entries only.
-    ensureStaff();
-    let sr=totR+2;   // one blank row after the per-day count rows
-    for(const g of STAFF_GROUPS){
-      const gc=ws.getCell(sr,1);gc.value=staffGroupLabel(g.key);ws.mergeCells(sr,1,sr,2);
-      gc.fill=solid(P.header);gc.font={bold:true,size:10,color:{argb:P.headerFg}};
-      gc.alignment={horizontal:'left'};gc.border=allBorder;
-      for(let c=3;c<=NC;c++){const cell=ws.getCell(sr,c);cell.fill=solid(P.header);cell.border=allBorder;}
-      sr++;
-      for(const p of staffOf(g.key)){
-        const nameC=ws.getCell(sr,1);nameC.value=p.name;nameC.fill=solid(P.grid);
-        nameC.font={color:{argb:P.gridFg},bold:true,size:11};nameC.border=allBorder;
-        const grpC=ws.getCell(sr,2);grpC.value='';grpC.fill=solid(P.grid);grpC.border=allBorder;
-        for(let d=0;d<14;d++){
-          const s=staffShiftAt(p.id,days[d]);
-          const cell=ws.getCell(sr,3+d);
-          cell.value=s==='OFF'?'Off':s;cell.alignment={horizontal:'center'};cell.border=allBorder;
-          const sc=P.S[s]||xlCustom(s);
-          if(sc){cell.fill=solid(sc[0]);cell.font={color:{argb:sc[1]},bold:true,size:10};}
-          else if(s==='OFF'){cell.fill=solid(P.grid);cell.font={color:{argb:P.offFg},size:10};}
-          else{cell.fill=solid(P.grid);cell.font={color:{argb:P.gridFg},size:10};}
-        }
-        const w1r=`COUNTA(C${sr}:I${sr})-COUNTIF(C${sr}:I${sr},"REQ")-COUNTIF(C${sr}:I${sr},"Off")`;
-        const w2r=`COUNTA(J${sr}:P${sr})-COUNTIF(J${sr}:P${sr},"REQ")-COUNTIF(J${sr}:P${sr},"Off")`;
-        [['Q',w1r],['R',w2r],['S',`Q${sr}+R${sr}`]].forEach(([col,f],k)=>{
-          const cell=ws.getCell(sr,17+k);cell.value={formula:f};cell.alignment={horizontal:'center'};
-          cell.fill=solid(P.count);cell.font={bold:true,color:{argb:P.countFg}};cell.border=allBorder;
-        });
-        sr++;
-      }
-    }
-    // column widths
-    ws.getColumn(1).width=15;ws.getColumn(2).width=7;
-    for(let d=0;d<14;d++)ws.getColumn(3+d).width=8;
-    ws.getColumn(17).width=5;ws.getColumn(18).width=5;ws.getColumn(19).width=6;
-    // RULE: Total per nurse must equal 7 — auto-flags when you edit any shift
-    ws.addConditionalFormatting({ref:`S3:S${2+N}`,rules:[
-      {type:'cellIs',operator:'notEqual',formulae:['7'],priority:1,
-        style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
-      {type:'cellIs',operator:'equal',formulae:['7'],priority:2,
-        style:{font:{bold:true,color:{argb:P.ok}}}}
-    ]});
-
-    /* ===== Sheet 2: Balances (live, references Schedule) ===== */
-    const bs=wb.addWorksheet('Balances',{views:[{state:'frozen',ySplit:2}]});
-    bs.mergeCells(1,1,1,9);
-    const bt=bs.getCell(1,1);bt.value='Leave balances  (used counts pull live from the Schedule sheet)';
-    bt.fill=solid(P.title);bt.font={bold:true,size:13,color:{argb:P.titleFg}};bs.getRow(1).height=22;
-    const bh=['RN','Group','Hol balance','Hol used','Hol remaining','Vac balance','Vac used','Vac remaining','SL used'];
-    bh.forEach((h,c)=>{const cell=bs.getCell(2,c+1);cell.value=h;cell.fill=solid(P.header);
-      cell.font={bold:true,size:10,color:{argb:P.headerFg}};cell.alignment={horizontal:'center'};cell.border=allBorder;});
-    order.forEach((i,pos)=>{
-      const r=3+pos;
-      const set=(col,val,opt)=>{const c=bs.getCell(r,col);c.value=val;c.border=allBorder;
-        c.fill=solid(P.grid);c.font=Object.assign({color:{argb:P.gridFg},size:10},opt||{});
-        c.alignment={horizontal:col<=2?(col===1?'left':'center'):'center'};return c;};
-      set(1,names[i],{bold:true});set(2,groups[i]);
-      set(3,holBal[i]);
-      set(4,{formula:`COUNTIF(Schedule!C${r}:P${r},"HOL")`});
-      set(5,{formula:`C${r}-D${r}`},{bold:true});
-      set(6,vacBal[i]);
-      set(7,{formula:`COUNTIF(Schedule!C${r}:P${r},"VAC")`});
-      set(8,{formula:`F${r}-G${r}`},{bold:true});
-      // sick leave has no entitlement to draw down — a running count, no "remaining"
-      set(9,{formula:`COUNTIF(Schedule!C${r}:P${r},"SL")`});
-    });
-    [3,4,5,6,7,8,9].forEach(c=>bs.getColumn(c).width=13);bs.getColumn(1).width=15;bs.getColumn(2).width=7;
-    // RULES: remaining < 0 red, low balance amber
-    bs.addConditionalFormatting({ref:`E3:E${2+N}`,rules:[
-      {type:'cellIs',operator:'lessThan',formulae:['0'],priority:1,style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
-      {type:'cellIs',operator:'between',formulae:['0','2'],priority:2,style:{fill:solidCF(P.warnBg),font:{color:{argb:P.warnFg}}}}
-    ]});
-    bs.addConditionalFormatting({ref:`H3:H${2+N}`,rules:[
-      {type:'cellIs',operator:'lessThan',formulae:['0'],priority:1,style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
-      {type:'cellIs',operator:'between',formulae:['0','3'],priority:2,style:{fill:solidCF(P.warnBg),font:{color:{argb:P.warnFg}}}}
-    ]});
-
+    xlScheduleSheet(wb,X,days,sh,weekStart);
+    xlBalancesSheet(wb,X);
     const buf=await wb.xlsx.writeBuffer();
     downloadBlob(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),`RN_schedule_${periodLabel()}.xlsx`);
     toast('Excel file downloaded (colored + live formulas)');
@@ -4244,101 +4240,104 @@ const PDF_COL={
 const PDF_T={title:15,sub:9,section:11,ink:[23,27,34],subInk:[90,100,114],offInk:[90,100,114],
   line:[205,210,218],headBg:[240,242,246],headInk:[64,74,90],footBg:[233,236,241],zebra:[248,249,251]};
 function exportPDF(){return withLockedView(exportPDFView);}
+// The roster PDF, in parts (audit M1).
+// The rows of the schedule table: RNs, the three per-day count rows, then each
+// support-staff group under its own heading row. The index sets say which row is which,
+// for the colouring in pdfScheduleCell.
+function pdfScheduleRows(days,sh){
+  const head=[['RN','Grp',...days.map((d,i)=>`${DAYS[i%7]} ${fmt(d)}`),'W1','W2','Tot']];
+  const body=[];
+  normalizeOrder();
+  for(const i of order){
+    const w1=sh[i].slice(0,7).filter(s=>ENTRY_TYPES.has(s)).length;
+    const w2=sh[i].slice(7,14).filter(s=>ENTRY_TYPES.has(s)).length;
+    body.push([names[i],groups[i],...sh[i].map(s=>s==='OFF'?'Off':s),w1,w2,w1+w2]);
+  }
+  const dayRow=['Day shifts',''],ngtRow=['Night shifts',''],totRow=['Total/day',''];
+  for(let d=0;d<14;d++){
+    dayRow.push(Array.from({length:N},(_,i)=>i).filter(i=>DAY_SHIFT_TYPES.includes(sh[i][d])).length);
+    ngtRow.push(dayTypeCount(sh,d,'N7'));
+    totRow.push(Array.from({length:N},(_,i)=>i).filter(i=>WORK_TYPES.has(sh[i][d])).length);
+  }
+  dayRow.push('','','');ngtRow.push('','','');totRow.push('','','');
+  body.push(dayRow,ngtRow,totRow);
+  ensureStaff();
+  const staffRows=new Set(),groupRows=new Set();
+  for(const g of STAFF_GROUPS){
+    groupRows.add(body.length);
+    body.push([staffGroupLabel(g.key),...Array(16).fill('')]);
+    for(const p of staffOf(g.key)){
+      let w1=0,w2=0;const cells=[];
+      for(let d=0;d<14;d++){const s=staffShiftAt(p.id,days[d]);
+        if(ENTRY_TYPES.has(s))(d<7?w1++:w2++);cells.push(s==='OFF'?'Off':s);}
+      staffRows.add(body.length);
+      body.push([p.name,'',...cells,w1,w2,w1+w2]);
+    }
+  }
+  return {head,body,firstCountRow:N,staffRows,groupRows};
+}
+// autoTable didParseCell: shift colours, the count rows, the staff headings
+function pdfScheduleCell(t,data){
+  const r=data.row.index,c=data.column.index,st=data.cell.styles;
+  if(data.section!=='body')return;
+  if(t.groupRows.has(r)){                                   // staff group heading
+    st.fillColor=[226,230,237];st.textColor=[45,54,68];st.fontStyle='bold';if(c===0)st.halign='left';return;
+  }
+  const isStaff=t.staffRows.has(r);
+  if(r>=t.firstCountRow&&!isStaff){                        // the three per-day count rows
+    st.fillColor=[238,240,244];st.textColor=[75,83,95];st.fontStyle='bold';if(c===0)st.halign='left';
+  }
+  else if(c>=2&&c<=15){
+    // Off carries no fill — it is the absence of a duty, not one of them
+    if(data.cell.raw==='Off'){st.textColor=PDF_T.offInk;}
+    else{const col=PDF_COL[data.cell.raw]||pdfCustom(data.cell.raw);
+      if(col){st.fillColor=col[0];st.textColor=col[1];st.fontStyle='bold';}}}
+  else if(c>=16){st.fillColor=[238,240,244];st.fontStyle='bold';}
+  if(isStaff&&c===0)st.halign='left';
+}
+function pdfBalances(doc){
+  const y=doc.lastAutoTable.finalY+18;
+  doc.setFont('helvetica','bold');doc.setFontSize(PDF_T.section);doc.setTextColor(...PDF_T.ink);
+  doc.text('Leave balances',24,y);
+  const body=[];
+  for(const i of order){const hu=countForRn(i,'HOL'),vu=countForRn(i,'VAC'),su=countForRn(i,'SL');
+    body.push([names[i],groups[i],holBal[i],hu,holBal[i]-hu,vacBal[i],vu,vacBal[i]-vu,su]);}
+  doc.autoTable({head:[['RN','Grp','Hol bal','Hol used','Hol rem','Vac bal','Vac used','Vac rem','SL used']],body,startY:y+8,margin:{left:20,right:20},
+    styles:{fontSize:8,halign:'center',cellPadding:3,lineColor:PDF_T.line,lineWidth:0.4,textColor:PDF_T.ink},
+    headStyles:{fillColor:PDF_T.headBg,textColor:PDF_T.headInk,fontStyle:'bold'},
+    alternateRowStyles:{fillColor:PDF_T.zebra},
+    columnStyles:{0:{halign:'left',cellWidth:96,fontStyle:'bold'}}});
+}
+// without the PDF library (or if it fails), fall back to the browser's own print
+function pdfPrintFallback(msg){
+  const prev=document.title;document.title=`RN Schedule ${periodLabel()}`;window.print();
+  setTimeout(()=>{document.title=prev;},500);
+  toast(msg);
+}
 function exportPDFView(){
   const J=window.jspdf&&window.jspdf.jsPDF;
   const{days,sh,weekStart}=sched;
-  if(!J){ // library unavailable (offline) -> browser print (may show URL footer)
-    const prev=document.title;document.title=`RN Schedule ${periodLabel()}`;window.print();
-    setTimeout(()=>{document.title=prev;},500);
-    toast('PDF library offline — used browser print');return;
-  }
+  if(!J){pdfPrintFallback('PDF library offline — used browser print');return;}   // (may show a URL footer)
   try{
     const doc=new J({orientation:'landscape',unit:'pt',format:'a4'});
     doc.setFont('helvetica','bold');doc.setFontSize(PDF_T.title);doc.setTextColor(...PDF_T.ink);
     doc.text('RN Rotating Schedule',24,26);
     doc.setFont('helvetica','normal');doc.setFontSize(PDF_T.sub);doc.setTextColor(...PDF_T.subInk);
     doc.text(`Cycle ${cycleOffset}  ·  ${fmt(weekStart)} – ${fmt(addDays(weekStart,13))} ${addDays(weekStart,13).getFullYear()}  ·  generated ${fmt(new Date())} ${new Date().getFullYear()}`,24,40);
-
-    // ----- schedule table -----
-    const head=[['RN','Grp',...days.map((d,i)=>`${DAYS[i%7]} ${fmt(d)}`),'W1','W2','Tot']];
-    const body=[];
-    normalizeOrder();
-    for(const i of order){
-      const w1=sh[i].slice(0,7).filter(s=>ENTRY_TYPES.has(s)).length;
-      const w2=sh[i].slice(7,14).filter(s=>ENTRY_TYPES.has(s)).length;
-      body.push([names[i],groups[i],...sh[i].map(s=>s==='OFF'?'Off':s),w1,w2,w1+w2]);
-    }
-    const dayRow=['Day shifts',''],ngtRow=['Night shifts',''],totRow=['Total/day',''];
-    for(let d=0;d<14;d++){
-      dayRow.push(Array.from({length:N},(_,i)=>i).filter(i=>DAY_SHIFT_TYPES.includes(sh[i][d])).length);
-      ngtRow.push(dayTypeCount(sh,d,'N7'));
-      totRow.push(Array.from({length:N},(_,i)=>i).filter(i=>WORK_TYPES.has(sh[i][d])).length);
-    }
-    dayRow.push('','','');ngtRow.push('','','');totRow.push('','','');
-    body.push(dayRow,ngtRow,totRow);
-    const firstCountRow=N;
-    // support-staff groups appended as their own labelled sections
-    ensureStaff();
-    const staffRowIdx=new Set(),groupRowIdx=new Set();
-    for(const g of STAFF_GROUPS){
-      groupRowIdx.add(body.length);
-      body.push([staffGroupLabel(g.key),...Array(16).fill('')]);
-      for(const p of staffOf(g.key)){
-        let w1=0,w2=0;const cells=[];
-        for(let d=0;d<14;d++){const s=staffShiftAt(p.id,days[d]);
-          if(ENTRY_TYPES.has(s))(d<7?w1++:w2++);cells.push(s==='OFF'?'Off':s);}
-        staffRowIdx.add(body.length);
-        body.push([p.name,'',...cells,w1,w2,w1+w2]);
-      }
-    }
+    const t=pdfScheduleRows(days,sh);
     doc.autoTable({
-      head,body,startY:50,margin:{left:20,right:20},
+      head:t.head,body:t.body,startY:50,margin:{left:20,right:20},
       styles:{fontSize:8,halign:'center',valign:'middle',cellPadding:3,lineColor:PDF_T.line,lineWidth:0.4,textColor:PDF_T.ink},
       headStyles:{fillColor:PDF_T.headBg,textColor:PDF_T.headInk,fontStyle:'bold',fontSize:7.5},
       columnStyles:{0:{halign:'left',cellWidth:72,fontStyle:'bold'},1:{cellWidth:22}},
-      didParseCell:(data)=>{
-        const r=data.row.index,c=data.column.index;
-        if(data.section!=='body')return;
-        if(groupRowIdx.has(r)){                       // staff group heading
-          data.cell.styles.fillColor=[226,230,237];data.cell.styles.textColor=[45,54,68];
-          data.cell.styles.fontStyle='bold';if(c===0)data.cell.styles.halign='left';return;
-        }
-        const isStaff=staffRowIdx.has(r);
-        if(r>=firstCountRow&&!isStaff){               // the three per-day count rows
-          data.cell.styles.fillColor=[238,240,244];data.cell.styles.textColor=[75,83,95];
-          data.cell.styles.fontStyle='bold';if(c===0)data.cell.styles.halign='left';
-        }
-        else if(c>=2&&c<=15){
-          // Off carries no fill — it is the absence of a duty, not one of them
-          if(data.cell.raw==='Off'){data.cell.styles.textColor=PDF_T.offInk;}
-          else{const col=PDF_COL[data.cell.raw]||pdfCustom(data.cell.raw);
-            if(col){data.cell.styles.fillColor=col[0];data.cell.styles.textColor=col[1];data.cell.styles.fontStyle='bold';}}}
-        else if(c>=16){data.cell.styles.fillColor=[238,240,244];data.cell.styles.fontStyle='bold';}
-        if(isStaff&&c===0)data.cell.styles.halign='left';
-      }
+      didParseCell:data=>pdfScheduleCell(t,data)
     });
-
-    // ----- balances table -----
-    let y=doc.lastAutoTable.finalY+18;
-    doc.setFont('helvetica','bold');doc.setFontSize(PDF_T.section);doc.setTextColor(...PDF_T.ink);
-    doc.text('Leave balances',24,y);
-    const thead=[['RN','Grp','Hol bal','Hol used','Hol rem','Vac bal','Vac used','Vac rem','SL used']];
-    const tbody=[];
-    for(const i of order){const hu=countForRn(i,'HOL'),vu=countForRn(i,'VAC'),su=countForRn(i,'SL');
-      tbody.push([names[i],groups[i],holBal[i],hu,holBal[i]-hu,vacBal[i],vu,vacBal[i]-vu,su]);}
-    doc.autoTable({head:thead,body:tbody,startY:y+8,margin:{left:20,right:20},
-      styles:{fontSize:8,halign:'center',cellPadding:3,lineColor:PDF_T.line,lineWidth:0.4,textColor:PDF_T.ink},
-      headStyles:{fillColor:PDF_T.headBg,textColor:PDF_T.headInk,fontStyle:'bold'},
-      alternateRowStyles:{fillColor:PDF_T.zebra},
-      columnStyles:{0:{halign:'left',cellWidth:96,fontStyle:'bold'}}});
-
+    pdfBalances(doc);
     doc.save(`RN_schedule_${periodLabel()}.pdf`);
     toast('PDF downloaded');
   }catch(err){
     console.error('PDF export failed',err);
-    const prev=document.title;document.title=`RN Schedule ${periodLabel()}`;window.print();
-    setTimeout(()=>{document.title=prev;},500);
-    toast('PDF export failed — used browser print');
+    pdfPrintFallback('PDF export failed — used browser print');
   }
 }
 
