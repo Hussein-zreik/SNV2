@@ -14,7 +14,7 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 ```bash
 npm install            # devDependencies only; the app's own libraries are checked in under vendor/
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
-npm run test:unit      # 54 engine unit tests (twice: local time + Los Angeles) + 27 vendor/policy checks, ~2s
+npm run test:unit      # engine tests (local time + Los Angeles), vendor/policy and app/test contract checks, ~2s
 npm test               # 183 checks driving the app in headless Chromium, ~70s
 npm run test:cloud     # 176 checks of firestore.rules, sign-in, roster sync + the staff link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
@@ -99,11 +99,21 @@ single inline `<script>`. Splitting it has been considered and rejected. Two con
 
 ### `test/`
 
-`engine.test.mjs` is the fast net over scheduling rules. `audit.mjs` drives the real app
+`engine.test.mjs` is the fast net over scheduling rules. `vendor.test.mjs` checks the
+vendored libraries, the security policy and the `data-on-*` wiring statically.
+`contract.test.mjs` checks the app/test contract below. `audit.mjs` drives the real app
 in Chromium and covers what the engine cannot: persistence, the state registry, undo,
 import/export, the merge function, and "no page errors". `cloud.mjs` covers what needs a
 database: the security rules caller by caller, sign-in, two devices syncing and clashing,
 and the staff request link through both pages.
+
+**The browser tests drive the app through its globals** (audit M4) — `computeSchedule`,
+`overrides`, `pushCloud`, ~150 names — because the app is one file with no module boundary
+to test through. `test/app-api.json` lists every app global each browser test uses, and
+`contract.test.mjs` fails within a second, naming the test file, if one is renamed or
+removed. **After renaming an app function or variable**, update the tests that use it,
+then run `node test/contract.test.mjs --write`; the diff of `app-api.json` shows the
+change in review. The same `--write` is needed when a test starts using another global.
 
 ## The three ideas you need before changing anything
 
