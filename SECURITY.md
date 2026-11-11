@@ -79,6 +79,9 @@ Be aware of the limits:
   settings are all kept. If both changed the *same* cell before either had synced,
   the one saved last stays, and both devices show a notice naming the cell and the
   two values; the device whose change was replaced can bring it back with Undo.
+- **Size.** The whole roster is one cloud record, which can hold about 1 MB: roughly
+  seven years of locked fortnights. **Cloud** shows how full it is and warns well before
+  the limit; a save that would not fit is kept on the device and never half-sent.
 - **One account.** Colleagues with their own accounts, or view-only access, are not
   built yet.
 
@@ -103,9 +106,12 @@ rules check, on the real project, proves they were published.
 - **If the policy ever blocks something, you see it**: a red banner at the top names
   what was stopped. Send that text to whoever maintains the app.
 
-What this does not do: the app's own buttons still use inline scripts, so the policy
-limits where data can go, not every script that could run. Fonts still come from Google
-Fonts.
+- **No inline code can run.** The app's buttons carry no script of their own, and the
+  policy refuses any script written into the page except the app's own, which it checks
+  by its exact checksum. Something slipped into a name or a comment cannot run.
+
+What this does not do: styles may still be written inline, and fonts still come from
+Google Fonts.
 
 ---
 

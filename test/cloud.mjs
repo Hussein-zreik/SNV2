@@ -362,6 +362,23 @@ const revs = await mgr.evaluate(async () => { const d = (await firebase.firestor
 check('every save advanced the revision by one, and the clash is on record', Number.isInteger(revs.rev) && revs.rev >= 5 && revs.log === 1, JSON.stringify(revs));
 check('an out-of-date copy of the app cannot overwrite the roster', await mgr.evaluate(() =>
   firebase.firestore().collection('rosters').doc(mgrUser.uid).set({ state: cloudStateObj(), updatedAt: Date.now() }).then(() => 'ok', e => e.code)) === 'permission-denied');
+console.log('--- the cloud roster size ---');
+const sz = await mgr.evaluate(() => ({ bytes: cloudBytes, shown: !document.getElementById('cloudSize').hidden || (openCloud(), !document.getElementById('cloudSize').hidden),
+  text: document.getElementById('cloudSizeMsg').textContent }));
+await mgr.evaluate(() => closeCloud());
+check('Cloud shows how big the roster is in the account', sz.bytes > 1000 && sz.shown && /Cloud roster: \d+ KB of 1 MB \(\d+%\)/.test(sz.text), JSON.stringify(sz));
+// a roster that can no longer fit: never sent, kept on the device, and said plainly
+const revBefore = await mgr.evaluate(async () => (await firebase.firestore().collection('rosters').doc(mgrUser.uid).get()).data().rev);
+await mgr.evaluate(() => { const b = snapshot(); notes['2031-05-05'] = {}; for (let i = 0; i < 12; i++) notes['2031-05-0' + (i % 9 + 1)] = Object.assign(notes['2031-05-0' + (i % 9 + 1)] || {}, { [rid(i)]: 'z'.repeat(299) });
+  for (let d = 0; d < 400; d++) { const k = isoKey(addDays(parseLocal('2032-01-05'), d)); notes[k] = {}; for (let i = 0; i < 12; i++) notes[k][rid(i)] = ('note ' + d + ' ' + i + ' ').padEnd(290, 'x'); }
+  pushHistory('big', b); render(); saveState(); });
+check('a roster too large for the cloud is not sent: the Cloud button says so',
+  await until(mgr, () => cloudStatus === 'full' && document.getElementById('cloudBtn').textContent.includes('Cloud full'), null, 20000));
+check('the problem banner says the changes are kept on this device only', await mgr.evaluate(() => problems.some(p => /no longer fits in the cloud/.test(p) && /NOT being sent/.test(p))));
+check('nothing was written to the account', await mgr.evaluate(async () => (await firebase.firestore().collection('rosters').doc(mgrUser.uid).get()).data().rev) === revBefore);
+check('the large roster is still on the device', await mgr.evaluate(() => Object.keys(notes).length > 400 && JSON.parse(localStorage.getItem(STORE_KEY)).notes['2032-01-05'] !== undefined));
+await mgr.evaluate(() => { undo(); dismissProblems(); });
+check('after taking the change back, saving to the account works again', await until(mgr, () => cloudStatus === 'synced' && !localAhead(), null, 20000));
 await dev2.evaluate(() => dismissSyncNote());
 await dev2.close();
 // the same device with no internet: Firebase cannot load at all

@@ -648,9 +648,10 @@ const inj = await page.evaluate(() => {
   applyStateObject(bad); render();
   openSettings(); for (const t of ['groups', 'night', 'min', 'shifts', 'staff', 'gen', 'data']) settTab(t); closeSettings();
   openRequests(); closeRequests(); openCellM(0, 1); closeCell();
-  for (const el of document.querySelectorAll('#tbl td.sh-cell,#settModal button,#reqList button')) { const oc = el.getAttribute('onclick') || ''; if (oc.includes('__inj_')) { try { el.click(); } catch (e) {} } }
+  const onAttrs = el => [...el.attributes].filter(a => /^(on|data-on-)/.test(a.name)).map(a => a.value).join(' ');
+  for (const el of document.querySelectorAll('#tbl td.sh-cell,#settModal button,#reqList button')) { if (onAttrs(el).includes('__inj_')) { try { el.click(); } catch (e) {} } }
   out.noInjectedElements = !document.querySelector('#tbl img, #settModal img, #settModal svg[onload], #reqModal img, #cellModal svg[onload]');
-  out.handlersClean = ![...document.querySelectorAll('[onclick],[onchange]')].some(el => /__inj_/.test(el.getAttribute('onclick') || '') || /__inj_/.test(el.getAttribute('onchange') || ''));
+  out.handlersClean = ![...document.querySelectorAll('*')].some(el => /__inj_/.test(onAttrs(el)));
   out.badValuesDropped = !JSON.stringify(cloudStateObj()).includes('__inj_');   // (the shift label is cut to 24 chars and only ever shown escaped)
   out.labelShownAsText = customShifts.length === 1;       // the label is kept, but only ever rendered escaped
   customShifts = []; rebuildShifts(); lockedCycles = {}; frozen = {}; overrides = {}; staffShifts = {}; nightList = null;
@@ -964,7 +965,7 @@ const vis = await page.evaluate(async () => {
   return out;
 });
 // the 3 violations provoked above are expected; they must be the only ones in the whole run
-const provoked = cspBlocked.filter(v => /evil\.example|eval/.test(v)).length;
+const provoked = cspBlocked.filter(v => /evil\.example|eval|script-src-attr/.test(v)).length;
 console.log('\n--- visible failures and the security policy ---');
 check('nothing was reported during the whole audit before this point', vis.quietBefore === true);
 check('an uncaught error and an unhandled promise both reach the red banner', vis.shown === true);
@@ -1038,9 +1039,111 @@ for (const [tz, r] of Object.entries(zones))
 check('every timezone agrees on the same days', new Set(Object.values(zones).map(r => r.cycle + r.next + r.req + r.period)).size === 1,
   JSON.stringify(Object.fromEntries(Object.entries(zones).map(([k, r]) => [k, r.period]))));
 
+/* ---------------- 4j. buttons without inline code (H3) ---------------- */
+const btn = await page.evaluate(async () => {
+  const out = {};
+  out.noInline = [...document.querySelectorAll('*')].every(el => ![...el.attributes].some(a => /^on/.test(a.name)));
+  // the parser: plain values only, nothing evaluated
+  const P = c => onParse(c);
+  out.parse = JSON.stringify([P("f()"), P("f(1,-2.5,'a b',\"c\",true,false,null)"), P("f(this,event,this.value,this.checked)"), P("f('it\\'s')")]);
+  out.refuse = [P("f(alert(1))"), P("f(window)"), P("a.b()"), P("f()+g()"), P("f(1);g()"), P("f(`x`)"), P("f(1,)x")].every(r => r === null);
+  // a real button: open Settings, change tab, close it
+  document.querySelector('[data-on-click="openSettings()"]').click();
+  const open1 = document.getElementById('settModal').classList.contains('open');
+  document.querySelector('[data-on-click="settTab(\'min\')"]').click();
+  const tab = document.querySelector('.sett-tab.active, .sett-tab.on, .sett-tab[aria-selected="true"]');
+  closeSettings();
+  out.settings = open1 && !document.getElementById('settModal').classList.contains('open') && !!tab && /min/.test(tab.getAttribute('data-tab'));
+  // generated HTML: a name in the grid opens its editor; Escape-less close via Cancel
+  const name = document.querySelector('#tbl .rn-name[data-on-click]');
+  name.click();
+  out.generated = document.getElementById('nameModal').classList.contains('open');
+  closeNameM();
+  // a change handler with this.value, and focus selecting the text
+  openSettings(); settTab('data');
+  const hol = document.querySelector('[data-on-change="setDefBal(\'hol\',this.value)"]'), keepHol = defHol;
+  hol.value = '17'; hol.dispatchEvent(new Event('change', { bubbles: true }));
+  const holOk = defHol === 17; setDefBal('hol', keepHol);
+  settTab('rules');
+  const turn = document.querySelector('[data-on-change="setFatigue(\'turnaround\',this.checked)"]'), keepTurn = fatigue.turnaround;
+  turn.checked = !keepTurn; turn.dispatchEvent(new Event('change', { bubbles: true }));
+  const turnOk = fatigue.turnaround === !keepTurn; setFatigue('turnaround', keepTurn);
+  closeSettings();
+  out.change = holOk && turnOk;
+  // inner handler first, and stopPropagation stops the outer one
+  const box = document.createElement('div'), calls = [];
+  window.__outer = () => calls.push('outer'); window.__inner = (ev, stop) => { calls.push('inner'); if (stop) ev.stopPropagation(); };
+  box.innerHTML = '<div data-on-click="__outer()"><button data-on-click="__inner(event,false)">a</button><button data-on-click="__inner(event,true)">b</button></div>';
+  document.body.appendChild(box);
+  box.querySelectorAll('button')[0].click(); box.querySelectorAll('button')[1].click();
+  out.order = calls.join(',');
+  // a button wired to nothing is reported, not ignored
+  box.innerHTML = '<button data-on-click="noSuchFunction()">x</button>'; box.querySelector('button').click();
+  out.reported = problems.some(p => /wired to something that does not exist/.test(p) && /noSuchFunction/.test(p));
+  box.remove(); delete window.__outer; delete window.__inner; dismissProblems();
+  // drag a row: the over-highlight follows the row under the pointer
+  const rows = document.querySelectorAll('#tbl tr[data-on-dragover]');
+  dragSrcPos = 0;
+  const dt = new DataTransfer();
+  rows[2].dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  out.drag = rows[2].classList.contains('drag-over');
+  rowDragEnd();
+  // inline code injected now cannot run at all
+  window.__ran = 0;
+  const x = document.createElement('div'); x.innerHTML = '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" onload="window.__ran=1"><button onclick="window.__ran=2">y</button>';
+  document.body.appendChild(x); x.querySelector('button').click();
+  await new Promise(r => setTimeout(r, 200));
+  out.inlineBlocked = window.__ran === 0;
+  x.remove(); dismissProblems();
+  return out;
+});
+console.log('\n--- buttons without inline code ---');
+check('no element on the page carries inline event-handler code', btn.noInline === true);
+check('button calls are parsed into a name and plain values', btn.parse === JSON.stringify([{ name: 'f', args: [] }, { name: 'f', args: ['1', '-2.5', "'a b'", '"c"', 'true', 'false', 'null'] },
+  { name: 'f', args: ['this', 'event', 'this.value', 'this.checked'] }, { name: 'f', args: ["'it\\'s'"] }]), btn.parse);
+check('anything that is not a plain call is refused', btn.refuse === true);
+check('a toolbar button, a settings tab and the close still work', btn.settings === true);
+check('buttons in generated HTML work (a name in the grid opens its editor)', btn.generated === true);
+check('change handlers are wired', btn.change === true);
+check('nested handlers run inner first, and stopPropagation stops the outer one', btn.order === 'inner,outer,inner', btn.order);
+check('a button wired to a missing function is reported, not silently ignored', btn.reported === true);
+check('dragging a row still highlights the row under the pointer', btn.drag === true);
+check('inline code injected into the page cannot run, and the attempt is blocked by the policy', btn.inlineBlocked === true && cspBlocked.some(v => /script-src-attr/.test(v)));
+
+/* ---------------- 4k. cloud roster size meter (H2) ---------------- */
+const size = await page.evaluate(() => {
+  const out = {}, keep = { cloudUid, cloudStatus, cloudBytes, cloudBytesTop, cloudSizeWarned };
+  const box = document.getElementById('cloudSize'), msg = () => document.getElementById('cloudSizeMsg').textContent;
+  out.bytes = docBytes({ a: 'é' }) === 10;                      // UTF-8 bytes, not characters
+  const doc = n => ({ state: { lockedCycles: { k: 'x'.repeat(n) }, notes: { k: 'y'.repeat(20000) } }, rev: 1 });
+  cloudUid = 'audit'; cloudStatus = 'synced'; cloudSizeWarned = 0;
+  noteDocSize(doc(300000)); updateCloudUI();
+  out.low = !box.hidden && box.className === 'csize' && /Cloud roster: 3\d\d KB of 1 MB \(3\d%\)\./.test(msg()) && /Largest: locked fortnights/.test(msg()) && problems.length === 0;
+  out.lowText = msg();
+  noteDocSize(doc(780000)); updateCloudUI();
+  out.warn = box.className === 'csize warn' && /Getting large/.test(msg()) && problems.length === 0;
+  noteDocSize(doc(960000)); updateCloudUI();
+  out.bad = box.className === 'csize bad' && /Nearly full/.test(msg()) && problems.filter(p => /of the 1 MB Firestore allows/.test(p)).length === 1;
+  noteDocSize(doc(970000));
+  out.once = problems.filter(p => /of the 1 MB Firestore allows/.test(p)).length === 1;
+  cloudStatus = 'unavailable'; updateCloudUI();
+  out.hiddenOffline = box.hidden;
+  dismissProblems();
+  cloudUid = keep.cloudUid; cloudStatus = keep.cloudStatus; cloudBytes = keep.cloudBytes; cloudBytesTop = keep.cloudBytesTop; cloudSizeWarned = keep.cloudSizeWarned;
+  updateCloudUI();
+  return out;
+});
+console.log('\n--- cloud roster size ---');
+check('size is counted in bytes as stored, not characters', size.bytes === true);
+check('a normal roster shows its size and what takes the most room, with no warning', size.low === true, size.lowText);
+check('at 70% the meter turns amber and says to plan ahead, still no alarm', size.warn === true);
+check('at 90% it turns red and the problem banner says so, once', size.bad === true && size.once === true);
+check('the meter is hidden when there is no connection', size.hiddenOffline === true);
+
 /* ---------------- 5. no runtime errors ---------------- */
 console.log('\n--- runtime ---');
-check('the app itself never trips the security policy, exports included', cspBlocked.length === provoked && provoked >= 3, cspBlocked.join(' | '));
+const provokedAll = cspBlocked.filter(v => /evil\.example|eval|script-src-attr/.test(v)).length;   // the deliberate attempts in 4g and 4j
+check('the app itself never trips the security policy, exports included', cspBlocked.length === provokedAll && provokedAll >= 4, cspBlocked.join(' | '));
 const realErrors = pageErrors.filter(e => !/audit: (uncaught|unhandled)/.test(e));
 check('no page errors', realErrors.length === 0, realErrors.join(' | '));
 

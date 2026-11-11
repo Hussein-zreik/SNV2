@@ -14,9 +14,9 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 ```bash
 npm install            # devDependencies only; the app's own libraries are checked in under vendor/
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
-npm run test:unit      # 54 engine unit tests (twice: local time + Los Angeles) + 27 vendor/policy checks, ~2s
-npm test               # 168 checks driving the app in headless Chromium, ~70s
-npm run test:cloud     # 170 checks of firestore.rules, sign-in, roster sync + the staff link, in the
+npm run test:unit      # engine tests (local time + Los Angeles), vendor/policy and app/test contract checks, ~2s
+npm test               # 183 checks driving the app in headless Chromium, ~70s
+npm run test:cloud     # 176 checks of firestore.rules, sign-in, roster sync + the staff link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
 
@@ -49,13 +49,13 @@ version (the cloud tests run those very files). So in the audit the real Excel a
 writers run; only the Firebase files are withheld there (`/vendor/firebase-` is aborted).
 
 **Both pages carry a Content-Security-Policy `<meta>`.** Nothing loads or connects unless
-it is listed: scripts from this site only, connections to `*.googleapis.com` only. If you
-add a resource from somewhere new it will be blocked — and shown in the red problem
-banner — until the policy lists it. `index.html` needs `'unsafe-inline'` for its inline
-`onclick` handlers, so there the policy limits where data can go rather than what can run.
-`request.html` has no inline handlers: its single inline `<script>` is allowed by checksum,
-so **after any edit to that script run `node test/vendor.test.mjs --write`** or the page
-stops working (the test catches it). Do not use `eval`/`new Function` anywhere.
+it is listed: scripts from this site only, connections to `*.googleapis.com` only, and **no
+inline code** except each page's single inline `<script>`, which is allowed by checksum.
+So **after any edit to the inline script of `index.html` or `request.html`, run
+`node test/vendor.test.mjs --write`**, or the page stops working (`test:unit` fails and
+says so). If you add a resource from somewhere new it will be blocked — and shown in the
+red problem banner — until the policy lists it. Do not use `eval`/`new Function`, inline
+`on*=` attributes or `javascript:` URLs anywhere.
 
 ## Architecture
 
@@ -80,20 +80,40 @@ which runs immediately and calls into it.
 One deliberately dense file: markup, CSS custom properties, and the whole UI layer in a
 single inline `<script>`. Splitting it has been considered and rejected. Two consequences:
 
-- **Functions must be global.** ~190 of them are called only from inline `onclick=""`
-  handlers, which ESLint sees as text — hence `no-unused-vars` is off. Do not convert one
-  to a `const` arrow or scope it inside another function.
+- **Buttons are wired with `data-on-<event>="fn(args)"`, never `onclick=`** (audit H3).
+  One dispatcher near the top of the script parses the attribute into a function name and
+  plain values — numbers, quoted text, `true`/`false`/`null`, `this`, `event`,
+  `this.value`, `this.checked` — and calls `window[name]`; nothing is evaluated. Events
+  handled: click, change, keydown, focus, drop, dragstart, dragover, dragend (add a row to
+  `ON_EVENTS` for another). It walks up from the target, so nested handlers run inner
+  first and `event.stopPropagation()` still works, but `event.currentTarget` is the
+  document: pass `this` instead. Anything else (a statement, an expression, a variable)
+  is refused and reported; wrap it in a small named function.
+- **Functions must be global.** ~200 of them are called only from those attributes, which
+  ESLint sees as text — hence `no-unused-vars` is off. Declare them with `function` (a
+  `const` arrow is not on `window`, so the dispatcher cannot find it; `test:unit` checks
+  every `data-on-*` target is declared).
 - **No formatter.** Prettier would produce an unreviewable diff and fight the intended
   compact style. ESLint is scoped to catch bugs a human misses in a file this size
   (typos, duplicate object keys, unreachable code), not to enforce layout.
 
 ### `test/`
 
-`engine.test.mjs` is the fast net over scheduling rules. `audit.mjs` drives the real app
+`engine.test.mjs` is the fast net over scheduling rules. `vendor.test.mjs` checks the
+vendored libraries, the security policy and the `data-on-*` wiring statically.
+`contract.test.mjs` checks the app/test contract below. `audit.mjs` drives the real app
 in Chromium and covers what the engine cannot: persistence, the state registry, undo,
 import/export, the merge function, and "no page errors". `cloud.mjs` covers what needs a
 database: the security rules caller by caller, sign-in, two devices syncing and clashing,
 and the staff request link through both pages.
+
+**The browser tests drive the app through its globals** (audit M4) — `computeSchedule`,
+`overrides`, `pushCloud`, ~150 names — because the app is one file with no module boundary
+to test through. `test/app-api.json` lists every app global each browser test uses, and
+`contract.test.mjs` fails within a second, naming the test file, if one is renamed or
+removed. **After renaming an app function or variable**, update the tests that use it,
+then run `node test/contract.test.mjs --write`; the diff of `app-api.json` shows the
+change in review. The same `--write` is needed when a test starts using another global.
 
 ## The three ideas you need before changing anything
 
@@ -314,6 +334,12 @@ There is no shared password and no anonymous sign-in; do not reintroduce either.
 - **No save before the first read:** `cloudSave`/`pushCloud` do nothing until
   `rosterReady`. Offline, a save fails, the status reads "Not sent yet", and it is
   retried on a timer and on the browser's `online` event.
+- **Size (audit H2).** The roster is one document and Firestore refuses one over 1 MiB
+  (~144 KB a year with every fortnight locked). `noteDocSize()` measures each document
+  sent or received; the Cloud window shows a meter, amber at 70%, red at 90% (plus one
+  problem banner). `pushCloud` never sends a document within 4 KB of the limit: the save
+  stays on the device, the status reads **Cloud full** and the banner says so. The real
+  fix when that day comes is archiving old fortnights out of the document.
 - **`probeRules()`** asks for a roster that is not ours. Refused → `cloudSecure=true`;
   answered → the Cloud window says the database is NOT secured. This is how the app
   can tell whether the rules were published; never replace it with an assumption.

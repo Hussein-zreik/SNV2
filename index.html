@@ -2,13 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- What this page may load and talk to (audit H5). Every script is served from this
-     site: the libraries are in vendor/, not fetched from a CDN. The page may talk only
-     to Google's API servers (Firebase sign-in and the roster), so a script that got
-     onto the page could not send the roster anywhere else. 'unsafe-inline' has to stay
-     while the buttons use inline onclick handlers; apis.google.com and the
-     firebaseapp.com frame are what Firebase sign-in loads on phones. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<!-- What this page may load and talk to (audit H5, H3). Every script is served from
+     this site: the libraries are in vendor/, not fetched from a CDN, and the one inline
+     script below is allowed by its checksum — no other inline code can run, and the
+     buttons carry none (data-on-* attributes, see "buttons without inline code").
+     After editing that script run `node test/vendor.test.mjs --write`, or the page
+     stops working (the test says so). The page may talk only to Google's API servers
+     (Firebase sign-in and the roster), so a script that got onto the page could not
+     send the roster anywhere else. apis.google.com and the firebaseapp.com frame are
+     what Firebase sign-in loads on phones. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-hy0AiLyCaNV1/Z3UYqD/q3yBxgVBwN9vdKrGDDqK7xQ=' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RN Rotating Schedule</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -163,6 +166,12 @@ input[type=date]:focus{border-color:var(--border-3)}
 .gp-shift{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);cursor:pointer}
 .gp-shift .gp-sub{color:var(--muted-2);font-size:var(--fs-xs)}
 .banner[hidden]{display:none}
+.csize{font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)}
+.csize[hidden]{display:none}
+.csize-bar{height:6px;border-radius:3px;background:var(--field-2);overflow:hidden;margin:2px 0 4px}
+.csize-bar span{display:block;height:100%;width:0;background:var(--pos)}
+.csize.warn .csize-bar span{background:var(--warn)}.csize.warn #cloudSizeMsg{color:var(--warn)}
+.csize.bad .csize-bar span{background:var(--neg)}.csize.bad #cloudSizeMsg{color:var(--neg);font-weight:500}
 #syncNote ul,#errNote ul{margin:4px 0 4px 18px;padding:0;font-family:var(--font-mono);font-size:var(--fs-xs)}
 #syncNote .bhint{font-size:var(--fs-xs)}
 .banner.bad{background:var(--hol-bg);border-color:var(--hol-bd);color:var(--hol-fg)}
@@ -564,8 +573,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <input class="ninput" id="pw1" type="password" placeholder="Password" autocomplete="current-password" aria-label="Password">
     <label class="lock-keep"><input type="checkbox" id="lockKeep"> Keep me signed in on this device<span>Tick only on a device that is yours. It also lets the app open when the internet is down.</span></label>
     <div class="lock-err" id="lockErr" role="alert"></div>
-    <button class="btn accent" id="lockGo" style="width:100%;justify-content:center" onclick="lockSubmit()">Sign in</button>
-    <div class="lock-links"><a role="button" tabindex="0" onclick="lockForgot()" onkeydown="if(event.key==='Enter')lockForgot()">Forgot password?</a></div>
+    <button class="btn accent" id="lockGo" style="width:100%;justify-content:center" data-on-click="lockSubmit()">Sign in</button>
+    <div class="lock-links"><a role="button" tabindex="0" data-on-click="lockForgot()" data-on-keydown="lockForgotKey(event)">Forgot password?</a></div>
   </div>
 </div>
 <div class="app" id="appRoot">
@@ -581,74 +590,74 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <span class="ctrl-label">Cycle 0</span>
       <input type="date" id="startDate" aria-label="Cycle 0 anchor date (Monday)" title="Anchor: the Monday that cycle 0 starts on. The view auto-advances from here as time passes.">
       <span class="cyclenav">
-        <button class="btn icon-only" onclick="prev()" aria-label="Previous cycle" title="Previous cycle">
+        <button class="btn icon-only" data-on-click="prev()" aria-label="Previous cycle" title="Previous cycle">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
         </button>
         <span class="week-pill" id="weekLabel">—</span>
-        <button class="btn icon-only" onclick="next()" aria-label="Next cycle" title="Next cycle">
+        <button class="btn icon-only" data-on-click="next()" aria-label="Next cycle" title="Next cycle">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
         </button>
-        <button class="btn icon-only" onclick="goToday()" aria-label="Jump to current cycle" title="Jump to the current cycle (today)">
+        <button class="btn icon-only" data-on-click="goToday()" aria-label="Jump to current cycle" title="Jump to the current cycle (today)">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 12l0-5M12 12l3.5 2"/></svg>
         </button>
       </span>
       <span class="divider"></span>
       <div class="segmented" id="modeSeg" role="group" aria-label="Schedule mode">
-        <button class="seg" id="segAuto" onclick="setMode(false)" aria-pressed="true" title="Auto: every fortnight is always filled automatically">Auto</button>
-        <button class="seg" id="segManual" onclick="setMode(true)" aria-pressed="false" title="Manual: fortnights start empty; add requests, then Generate">Manual</button>
+        <button class="seg" id="segAuto" data-on-click="setMode(false)" aria-pressed="true" title="Auto: every fortnight is always filled automatically">Auto</button>
+        <button class="seg" id="segManual" data-on-click="setMode(true)" aria-pressed="false" title="Manual: fortnights start empty; add requests, then Generate">Manual</button>
       </div>
-      <button class="btn primary" id="regenBtn" onclick="regen()" title="Generate a new random schedule">
+      <button class="btn primary" id="regenBtn" data-on-click="regen()" title="Generate a new random schedule">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 5v6h-6"/></svg>Regenerate
       </button>
-      <button class="btn primary" id="genBtn" onclick="generateFortnight()" style="display:none" title="Fill this empty fortnight, respecting the rules, turns and requests">
+      <button class="btn primary" id="genBtn" data-on-click="generateFortnight()" style="display:none" title="Fill this empty fortnight, respecting the rules, turns and requests">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg><span id="genLbl">Generate</span>
       </button>
-      <button class="btn" id="clearFnBtn" onclick="clearCycle()" style="display:none" title="Delete everything in this fortnight">
+      <button class="btn" id="clearFnBtn" data-on-click="clearCycle()" style="display:none" title="Delete everything in this fortnight">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>Clear
       </button>
-      <button class="btn" id="lockBtn" onclick="toggleCycleLock()" aria-pressed="false" title="Lock this fortnight">
+      <button class="btn" id="lockBtn" data-on-click="toggleCycleLock()" aria-pressed="false" title="Lock this fortnight">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span id="lockLbl">Lock</span>
       </button>
       <span class="divider"></span>
-      <button class="btn" id="undoBtn" onclick="undo()" title="Undo the last change (Ctrl+Z)">
+      <button class="btn" id="undoBtn" data-on-click="undo()" title="Undo the last change (Ctrl+Z)">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-1"/></svg><span class="btxt">Undo</span>
       </button>
     </div>
     <!-- row 2: tools, exports and system -->
     <div class="toolrow secondary">
-      <button class="btn ghost" onclick="openSettings()" title="Group lists and turn order">
+      <button class="btn ghost" data-on-click="openSettings()" title="Group lists and turn order">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H7a1.7 1.7 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V7a1.7 1.7 0 0 0 1.5 1H23a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="btxt">Settings</span>
       </button>
-      <button class="btn ghost" onclick="openRequests()" title="Enter requested duties, offs and vacations — the schedule adapts around them">
+      <button class="btn ghost" data-on-click="openRequests()" title="Enter requested duties, offs and vacations — the schedule adapts around them">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="btxt">Requests</span>
       </button>
-      <button class="btn ghost" id="sreqBtn" onclick="openStaffReq()" title="Requests staff sent through the request link — a reference list">
+      <button class="btn ghost" id="sreqBtn" data-on-click="openStaffReq()" title="Requests staff sent through the request link — a reference list">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="btxt">Staff requests</span><span class="sreq-badge" id="sreqBadge" hidden></span>
       </button>
-      <button class="btn ghost" onclick="openReport()" title="Generate a monthly duty report">
+      <button class="btn ghost" data-on-click="openReport()" title="Generate a monthly duty report">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg><span class="btxt">Report</span>
       </button>
-      <button class="btn ghost" onclick="openFairness()" title="Fairness dashboard — nights, weekends & holidays per nurse">
+      <button class="btn ghost" data-on-click="openFairness()" title="Fairness dashboard — nights, weekends & holidays per nurse">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M5 21h14"/><path d="M12 5L5 8M12 5l7 3"/><path d="M5 8l-2.5 5a2.5 2.5 0 0 0 5 0zM19 8l-2.5 5a2.5 2.5 0 0 0 5 0z"/></svg><span class="btxt">Fairness</span>
       </button>
-      <button class="btn ghost" onclick="openHistory()" title="View change history">
+      <button class="btn ghost" data-on-click="openHistory()" title="View change history">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v6h6M3 9a9 9 0 1 1 2 6"/><path d="M12 7v5l3 2"/></svg><span class="btxt">History</span>
       </button>
       <span class="divider"></span>
-      <button class="btn ghost" onclick="exportPDF()" title="Export / print as PDF">
+      <button class="btn ghost" data-on-click="exportPDF()" title="Export / print as PDF">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg><span class="btxt">PDF</span>
       </button>
-      <button class="btn ghost" onclick="exportExcel()" title="Export as Excel spreadsheet">
+      <button class="btn ghost" data-on-click="exportExcel()" title="Export as Excel spreadsheet">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 9h16M9 4v16"/></svg><span class="btxt">Excel</span>
       </button>
       <span class="divider"></span>
-      <button class="btn ghost" id="cloudBtn" onclick="openCloud()" title="Cloud sync across devices">
+      <button class="btn ghost" id="cloudBtn" data-on-click="openCloud()" title="Cloud sync across devices">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 18 18z"/></svg><span class="btxt">Cloud</span>
       </button>
-      <button class="btn ghost icon-only" onclick="lockApp()" aria-label="Sign out and lock the app" title="Sign out and lock the app">
+      <button class="btn ghost icon-only" data-on-click="lockApp()" aria-label="Sign out and lock the app" title="Sign out and lock the app">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
       </button>
-      <button class="btn ghost" id="themeBtn" onclick="toggleTheme()" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
+      <button class="btn ghost" id="themeBtn" data-on-click="toggleTheme()" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
     </div>
   </div>
 </div>
@@ -675,12 +684,12 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 <div class="summary-row" id="sumBar"></div>
 
 <div class="banner bad" id="saveWarn" role="alert" hidden><span class="bic">⚠</span><div><b>Changes are not being saved on this device.</b> The browser's storage is full or blocked. Your work is still on screen: open <b>Settings → Roster &amp; data → Export backup</b> now, before closing or reloading this page.</div></div>
-<div class="banner bad" id="errNote" role="alert" hidden><span class="bic">⚠</span><div id="errNoteBody" style="flex:1"></div><button class="btn sm" onclick="dismissProblems()">Dismiss</button></div>
-<div class="banner warn" id="syncNote" role="status" hidden><span class="bic">⇄</span><div id="syncNoteBody" style="flex:1"></div><button class="btn sm" onclick="dismissSyncNote()">Dismiss</button></div>
+<div class="banner bad" id="errNote" role="alert" hidden><span class="bic">⚠</span><div id="errNoteBody" style="flex:1"></div><button class="btn sm" data-on-click="dismissProblems()">Dismiss</button></div>
+<div class="banner warn" id="syncNote" role="status" hidden><span class="bic">⇄</span><div id="syncNoteBody" style="flex:1"></div><button class="btn sm" data-on-click="dismissSyncNote()">Dismiss</button></div>
 <div class="banner ok" id="banner"></div>
 
 <div class="cyc-info" id="cycInfoSection">
-  <button class="cyc-head" id="cycInfoToggle" onclick="toggleCycInfo()" aria-expanded="true" aria-controls="cycInfoBody" title="Show or hide whose turn it is">
+  <button class="cyc-head" id="cycInfoToggle" data-on-click="toggleCycInfo()" aria-expanded="true" aria-controls="cycInfoBody" title="Show or hide whose turn it is">
     <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/></svg>
     Whose turn this cycle
     <span class="cyc-hint" id="cycInfoHint"></span>
@@ -691,8 +700,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 
 <div class="roster-ctl">
   <span>Roster: <b id="rnCount">19</b> RNs</span>
-  <button class="btn sm" onclick="addRN('A')" title="Add an RN to Group A"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/></svg>Group A</button>
-  <button class="btn sm" onclick="addRN('B')" title="Add an RN to Group B"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/></svg>Group B</button>
+  <button class="btn sm" data-on-click="addRN('A')" title="Add an RN to Group A"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/></svg>Group A</button>
+  <button class="btn sm" data-on-click="addRN('B')" title="Add an RN to Group B"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:13px;height:13px"><path d="M12 5v14M5 12h14"/></svg>Group B</button>
   <span class="roster-hint">Drag the ⠿ handle to reorder a row (RN keeps their duties). Click a name to rename, move, or delete.</span>
 </div>
 
@@ -701,7 +710,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 </div>
 
 <div class="tracker-section" id="trackerSection">
-  <button class="tracker-title" id="trackerToggle" onclick="toggleTracker()" aria-expanded="true" aria-controls="trackerBody" title="Show or hide the balances table">
+  <button class="tracker-title" id="trackerToggle" data-on-click="toggleTracker()" aria-expanded="true" aria-controls="trackerBody" title="Show or hide the balances table">
     <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
     Leave balances
     <span class="tracker-count" id="trackerCount"></span>
@@ -717,15 +726,15 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="report-head">
       <h3 style="margin:0">Monthly duty report</h3>
       <div class="report-nav">
-        <button class="btn icon-only" onclick="reportMonth(-1)" title="Previous month" aria-label="Previous month"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button class="btn icon-only" data-on-click="reportMonth(-1)" title="Previous month" aria-label="Previous month"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
         <span id="reportMonthLabel" class="report-month">—</span>
-        <button class="btn icon-only" onclick="reportMonth(1)" title="Next month" aria-label="Next month"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="btn icon-only" data-on-click="reportMonth(1)" title="Next month" aria-label="Next month"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
       </div>
     </div>
     <div class="report-body" id="reportBody"></div>
     <div class="mactions" style="margin-top:1rem">
-      <button class="btn" onclick="downloadReportPDF()" title="Download this report as PDF">Download PDF</button>
-      <button class="btn accent" onclick="closeReport()">Close</button>
+      <button class="btn" data-on-click="downloadReportPDF()" title="Download this report as PDF">Download PDF</button>
+      <button class="btn accent" data-on-click="closeReport()">Close</button>
     </div>
   </div>
 </div>
@@ -734,15 +743,15 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="report-head">
       <h3 style="margin:0">Fairness dashboard</h3>
       <div class="fair-range">
-        <label class="fair-lbl">From <input type="date" id="fairStart" class="fair-date" onchange="fairApplyRange('start')"></label>
-        <label class="fair-lbl">To <input type="date" id="fairEnd" class="fair-date" onchange="fairApplyRange('end')"></label>
+        <label class="fair-lbl">From <input type="date" id="fairStart" class="fair-date" data-on-change="fairApplyRange('start')"></label>
+        <label class="fair-lbl">To <input type="date" id="fairEnd" class="fair-date" data-on-change="fairApplyRange('end')"></label>
       </div>
     </div>
     <div class="fair-presets">
-      <button class="btn" onclick="fairPreset('month')">This month</button>
-      <button class="btn" onclick="fairPreset('year')">This year</button>
-      <button class="btn" onclick="fairPreset('n3')">Next 3 months</button>
-      <button class="btn" onclick="fairPreset('n6')">Next 6 months</button>
+      <button class="btn" data-on-click="fairPreset('month')">This month</button>
+      <button class="btn" data-on-click="fairPreset('year')">This year</button>
+      <button class="btn" data-on-click="fairPreset('n3')">Next 3 months</button>
+      <button class="btn" data-on-click="fairPreset('n6')">Next 6 months</button>
       <span id="fairRangeInfo" class="fair-range-info">—</span>
     </div>
     <div id="fairSummary"></div>
@@ -753,8 +762,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       Nights are compared <b>within each group</b> (the rotation is group-based); weekend days across the whole roster. Holidays &amp; vacations reflect what's been entered.
     </div>
     <div class="mactions" style="margin-top:1rem">
-      <button class="btn" onclick="downloadFairnessPDF()" title="Download this dashboard as PDF">Download PDF</button>
-      <button class="btn accent" onclick="closeFairness()">Close</button>
+      <button class="btn" data-on-click="downloadFairnessPDF()" title="Download this dashboard as PDF">Download PDF</button>
+      <button class="btn accent" data-on-click="closeFairness()">Close</button>
     </div>
   </div>
 </div>
@@ -765,14 +774,14 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <span class="sett-cyc" id="settCyc">—</span>
     </div>
     <div class="sett-tabs" role="tablist">
-      <button class="sett-tab" data-tab="groups" onclick="settTab('groups')">Groups &amp; turn</button>
-      <button class="sett-tab" data-tab="night"  onclick="settTab('night')">Night cycle</button>
-      <button class="sett-tab" data-tab="min"    onclick="settTab('min')">Staffing minimums</button>
-      <button class="sett-tab" data-tab="shifts" onclick="settTab('shifts')">Shifts</button>
-      <button class="sett-tab" data-tab="staff"  onclick="settTab('staff')">Support staff</button>
-      <button class="sett-tab" data-tab="gen"    onclick="settTab('gen')">Generate</button>
-      <button class="sett-tab" data-tab="rules"  onclick="settTab('rules')">Fatigue rules</button>
-      <button class="sett-tab" data-tab="data"   onclick="settTab('data')">Roster &amp; data</button>
+      <button class="sett-tab" data-tab="groups" data-on-click="settTab('groups')">Groups &amp; turn</button>
+      <button class="sett-tab" data-tab="night"  data-on-click="settTab('night')">Night cycle</button>
+      <button class="sett-tab" data-tab="min"    data-on-click="settTab('min')">Staffing minimums</button>
+      <button class="sett-tab" data-tab="shifts" data-on-click="settTab('shifts')">Shifts</button>
+      <button class="sett-tab" data-tab="staff"  data-on-click="settTab('staff')">Support staff</button>
+      <button class="sett-tab" data-tab="gen"    data-on-click="settTab('gen')">Generate</button>
+      <button class="sett-tab" data-tab="rules"  data-on-click="settTab('rules')">Fatigue rules</button>
+      <button class="sett-tab" data-tab="data"   data-on-click="settTab('data')">Roster &amp; data</button>
     </div>
 
     <div class="sett-panel" id="settPanel-groups">
@@ -780,8 +789,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <div class="sett-swaphint" id="settSwapHint"></div>
       <div class="sett-grid" id="settBody"></div>
       <div class="mactions" style="margin-top:var(--sp-3)">
-        <button class="btn sm" onclick="settAdd('A')">+ Add to A</button>
-        <button class="btn sm" onclick="settAdd('B')">+ Add to B</button>
+        <button class="btn sm" data-on-click="settAdd('A')">+ Add to A</button>
+        <button class="btn sm" data-on-click="settAdd('B')">+ Add to B</button>
       </div>
     </div>
 
@@ -793,7 +802,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="sett-panel" id="settPanel-min" hidden>
       <div class="sett-note">Minimum staff needed each weekday for each shift type. The generator fills weekdays up to these numbers; the health banner flags any day below them. Weekend day cover is the fixed 2-RN turn (edit D7 only). <b>N7</b> is the <b>night</b> requirement and applies every day — it is staffed by the <b>Night cycle</b> turn (that many RNs from Group A, and that many from Group B, alternating weeks), never by day shifts.</div>
       <div id="settMinBody"></div>
-      <div class="mactions" style="margin-top:var(--sp-3)"><button class="btn sm" onclick="minReset()">Reset to defaults</button></div>
+      <div class="mactions" style="margin-top:var(--sp-3)"><button class="btn sm" data-on-click="minReset()">Reset to defaults</button></div>
     </div>
 
     <div class="sett-panel" id="settPanel-shifts" hidden>
@@ -809,9 +818,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="sett-panel" id="settPanel-gen" hidden>
       <div class="fatigue-box">
         <h4 class="fatigue-h">What Generate fills <span class="fatigue-sub">(Manual mode — Auto mode always fills everything)</span></h4>
-        <label class="fatigue-row"><input type="checkbox" id="gpWeekdays" onchange="setGenPart('weekdays',this.checked)"> <b>Weekdays</b> — Mon–Fri day &amp; evening shifts</label>
-        <label class="fatigue-row"><input type="checkbox" id="gpWeekends" onchange="setGenPart('weekends',this.checked)"> <b>Weekends</b> — the Sat/Sun day turn</label>
-        <label class="fatigue-row"><input type="checkbox" id="gpNights" onchange="setGenPart('nights',this.checked)"> <b>Nights</b> — the night turn (N7)</label>
+        <label class="fatigue-row"><input type="checkbox" id="gpWeekdays" data-on-change="setGenPart('weekdays',this.checked)"> <b>Weekdays</b> — Mon–Fri day &amp; evening shifts</label>
+        <label class="fatigue-row"><input type="checkbox" id="gpWeekends" data-on-change="setGenPart('weekends',this.checked)"> <b>Weekends</b> — the Sat/Sun day turn</label>
+        <label class="fatigue-row"><input type="checkbox" id="gpNights" data-on-change="setGenPart('nights',this.checked)"> <b>Nights</b> — the night turn (N7)</label>
         <div class="fatigue-row" style="margin-top:var(--sp-2)"><b>Shifts</b> <span class="fatigue-sub">— combine with the parts above: Weekdays + D6 fills only weekday D6; the weekend turn is D7</span></div>
         <div class="gp-shifts" id="gpShifts"></div>
         <div class="sett-note" style="margin-top:var(--sp-2)">Unticked parts are left blank but <b>reserved</b>: a nurse on the night or weekend turn only gets the rest of their 4/3 · 3/4 on weekdays. Tick another part later and press <b>Generate</b> again — it fills just the new part and keeps everything already on the grid. Once every ticked part is in, the button becomes <b>Regenerate</b> and redoes only the ticked parts.</div>
@@ -822,9 +831,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="sett-panel" id="settPanel-rules" hidden>
       <div class="fatigue-box">
         <h4 class="fatigue-h">Fatigue rules <span class="fatigue-sub">(advisory warnings in the health banner — never change the schedule)</span></h4>
-        <label class="fatigue-row"><input type="checkbox" id="fgTurn" onchange="setFatigue('turnaround',this.checked)"> Warn on a <b>night → day</b> shift the next day</label>
-        <label class="fatigue-row">Max <input type="number" id="fgMaxN" min="0" max="31" class="fatigue-num" onchange="setFatigue('maxNights',this.value)"> <b>nights per month</b> <span class="fatigue-sub">(0 = off)</span></label>
-        <label class="fatigue-row">At least <input type="number" id="fgRest" min="1" max="7" class="fatigue-num" onchange="setFatigue('minRest',this.value)"> <b>days off between working stretches</b> <span class="fatigue-sub">(1 = off)</span></label>
+        <label class="fatigue-row"><input type="checkbox" id="fgTurn" data-on-change="setFatigue('turnaround',this.checked)"> Warn on a <b>night → day</b> shift the next day</label>
+        <label class="fatigue-row">Max <input type="number" id="fgMaxN" min="0" max="31" class="fatigue-num" data-on-change="setFatigue('maxNights',this.value)"> <b>nights per month</b> <span class="fatigue-sub">(0 = off)</span></label>
+        <label class="fatigue-row">At least <input type="number" id="fgRest" min="1" max="7" class="fatigue-num" data-on-change="setFatigue('minRest',this.value)"> <b>days off between working stretches</b> <span class="fatigue-sub">(1 = off)</span></label>
       </div>
     </div>
 
@@ -833,7 +842,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     </div>
 
     <div class="mactions" style="margin-top:1rem;justify-content:flex-end">
-      <button class="btn accent" onclick="closeSettings()">Done</button>
+      <button class="btn accent" data-on-click="closeSettings()">Done</button>
     </div>
   </div>
 </div>
@@ -842,9 +851,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="report-head">
       <h3 style="margin:0">Requests</h3>
       <div class="report-nav">
-        <button class="btn icon-only" onclick="reqCycle(-1)" title="Previous fortnight" aria-label="Previous"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button class="btn icon-only" data-on-click="reqCycle(-1)" title="Previous fortnight" aria-label="Previous"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
         <span id="reqCycLabel" class="report-month">—</span>
-        <button class="btn icon-only" onclick="reqCycle(1)" title="Next fortnight" aria-label="Next"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button class="btn icon-only" data-on-click="reqCycle(1)" title="Next fortnight" aria-label="Next"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
       </div>
     </div>
     <div class="req-form">
@@ -862,7 +871,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
         <textarea class="ninput" id="reqReason" rows="2" maxlength="300" placeholder="e.g. child's school event · medical appointment · exam" style="resize:vertical;line-height:var(--lh-normal);margin:4px 0 0"></textarea>
       </label>
       <div class="mactions" style="margin-top:10px">
-        <button class="btn accent" onclick="reqAdd()">Add request</button>
+        <button class="btn accent" data-on-click="reqAdd()">Add request</button>
         <span id="reqAddMsg" style="font-size:11px;color:var(--muted-2);align-self:center"></span>
       </div>
     </div>
@@ -870,12 +879,12 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <div class="report-body" id="reqList" style="max-height:34vh"></div>
     <div class="req-note">Requests are locked: the schedule automatically rebuilds around them and keeps every staffing rule it can. A request never changes another. Anything the rules can't satisfy (e.g. too many off the same day) is flagged in the banner.</div>
     <div class="mactions" style="margin-top:1rem;justify-content:space-between">
-      <button class="btn danger" onclick="reqClearAll()" title="Delete every logged request">Clear all</button>
+      <button class="btn danger" data-on-click="reqClearAll()" title="Delete every logged request">Clear all</button>
       <span style="display:flex;gap:var(--sp-2)">
-        <button class="btn" onclick="exportRequestReport()" title="Download an Excel sheet of this fortnight's time-off requests (Req off, Day off, Holiday, Vacation, Sick leave) with each RN's reason">
+        <button class="btn" data-on-click="exportRequestReport()" title="Download an Excel sheet of this fortnight's time-off requests (Req off, Day off, Holiday, Vacation, Sick leave) with each RN's reason">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Request report
         </button>
-        <button class="btn accent" onclick="closeRequests()">Close</button>
+        <button class="btn accent" data-on-click="closeRequests()">Close</button>
       </span>
     </div>
   </div>
@@ -895,29 +904,29 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
             <input class="ninput" id="sreqTitle" type="text" maxlength="60" placeholder="e.g. PACU" style="margin:0">
           </label>
           <div class="mactions" style="justify-content:flex-start;margin-top:10px">
-            <button class="btn accent" onclick="sreqCreate()">Create the staff link</button>
+            <button class="btn accent" data-on-click="sreqCreate()">Create the staff link</button>
             <span class="sreq-msg" id="sreqSetupMsg" role="status"></span>
           </div>
         </div>
         <div id="sreqLinkBox" hidden>
           <div class="req-days-lbl">Link to send to staff</div>
           <div class="sreq-link">
-            <input class="ninput" id="sreqUrl" type="text" readonly onfocus="this.select()" aria-label="Staff request link">
-            <button class="btn accent" onclick="sreqCopy()">Copy link</button>
-            <button class="btn" id="sreqPauseBtn" onclick="sreqToggleOpen()">Pause</button>
-            <button class="btn danger" onclick="sreqNewLink()" title="Stop the current link and make a new one">New link</button>
+            <input class="ninput" id="sreqUrl" type="text" readonly data-on-focus="selectAll(this)" aria-label="Staff request link">
+            <button class="btn accent" data-on-click="sreqCopy()">Copy link</button>
+            <button class="btn" id="sreqPauseBtn" data-on-click="sreqToggleOpen()">Pause</button>
+            <button class="btn danger" data-on-click="sreqNewLink()" title="Stop the current link and make a new one">New link</button>
           </div>
           <div class="sreq-state" id="sreqStateMsg"></div>
         </div>
       </div>
       <div class="req-list-h">Received <span id="sreqCount" class="req-count"></span>
-        <label class="sreq-filter"><input type="checkbox" id="sreqShowDone" onchange="renderStaffReqList()"> Show done</label>
+        <label class="sreq-filter"><input type="checkbox" id="sreqShowDone" data-on-change="renderStaffReqList()"> Show done</label>
       </div>
       <div class="report-body" id="sreqList" style="max-height:38vh"></div>
       <div class="req-note">A reference list only — nothing here changes the roster. To grant a request, add it in the <b>Requests</b> window, then tick it here as done.</div>
     </div>
     <div class="mactions" style="margin-top:1rem">
-      <button class="btn accent" onclick="closeStaffReq()">Close</button>
+      <button class="btn accent" data-on-click="closeStaffReq()">Close</button>
     </div>
   </div>
 </div>
@@ -925,33 +934,34 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
   <div class="modal">
     <h3>Cloud sync</h3>
     <div id="cloudStatusMsg" style="font-size:var(--fs-sm);color:var(--text-2);margin-bottom:var(--sp-2);line-height:var(--lh-normal)"></div>
-    <div id="cloudSecureMsg" style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)"></div>
+    <div id="cloudSecureMsg" style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-2);line-height:var(--lh-normal)"></div>
+    <div id="cloudSize" class="csize" hidden><div class="csize-bar"><span id="cloudSizeFill"></span></div><div id="cloudSizeMsg"></div></div>
     <div id="legacyBox">
       <div class="slbl">Old shared copy (unit code)</div>
       <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:6px;line-height:var(--lh-normal)">Before sign-in, the roster was shared under a unit code that anyone could use. Check whether a copy is still stored there, then delete it.</div>
       <div style="display:flex;gap:var(--sp-2)">
         <input class="ninput" id="unitInput" type="text" placeholder="old unit code" autocomplete="off" style="margin:0" aria-label="Old unit code">
-        <button class="btn" onclick="legacyCheck()">Check</button>
+        <button class="btn" data-on-click="legacyCheck()">Check</button>
       </div>
       <div id="legacyMsg" role="status" style="font-size:var(--fs-xs);color:var(--muted-2);margin:6px 0;line-height:var(--lh-normal);min-height:16px"></div>
       <div id="legacyActions" style="display:none;gap:var(--sp-2);margin-bottom:var(--sp-4)">
-        <button class="btn" style="flex:1" onclick="legacyUse()" title="Replace the roster in your account with the old shared copy">Use this roster</button>
-        <button class="btn danger" style="flex:1" onclick="legacyDelete()" title="Delete the old shared copy for good">Delete old copy</button>
+        <button class="btn" style="flex:1" data-on-click="legacyUse()" title="Replace the roster in your account with the old shared copy">Use this roster</button>
+        <button class="btn danger" style="flex:1" data-on-click="legacyDelete()" title="Delete the old shared copy for good">Delete old copy</button>
       </div>
     </div>
     <div class="slbl">Backup</div>
     <div style="display:flex;gap:var(--sp-2);margin-bottom:var(--sp-2)">
-      <button class="btn" style="flex:1" onclick="exportBackup()" title="Download a full backup file (roster, requests, schedule settings)">
+      <button class="btn" style="flex:1" data-on-click="exportBackup()" title="Download a full backup file (roster, requests, schedule settings)">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>Export
       </button>
-      <button class="btn" style="flex:1" onclick="document.getElementById('importFile').click()" title="Restore everything from a backup file">
+      <button class="btn" style="flex:1" data-on-click="openImportPicker()" title="Restore everything from a backup file">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V9m0 0l-4 4m4-4l4 4M5 3h14"/></svg>Import
       </button>
-      <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importBackup(this)">
+      <input type="file" id="importFile" accept="application/json,.json" style="display:none" data-on-change="importBackup(this)">
     </div>
     <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)">Export saves everything to a file on this device. Import replaces the current schedule — you'll be asked to confirm, and it can be undone.</div>
     <div class="mactions">
-      <button class="btn accent" onclick="closeCloud()">Close</button>
+      <button class="btn accent" data-on-click="closeCloud()">Close</button>
     </div>
   </div>
 </div>
@@ -963,12 +973,12 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <textarea class="ninput" id="mNoteIn" rows="2" maxlength="300" placeholder="e.g. swapped with RN 7 · covering sick leave · why this is flagged" style="resize:vertical;line-height:var(--lh-normal)"></textarea>
     <div class="mactions" style="justify-content:space-between">
       <span style="display:flex;gap:8px">
-        <button class="btn" id="flagCellBtn" onclick="toggleFlagBtn()" title="Flag this cell so it stands out on the schedule">⚐ Flag</button>
-        <button class="btn" id="resetCellBtn" onclick="resetCell()" title="Remove this entry and let the schedule auto-fill this cell">Reset to auto</button>
+        <button class="btn" id="flagCellBtn" data-on-click="toggleFlagBtn()" title="Flag this cell so it stands out on the schedule">⚐ Flag</button>
+        <button class="btn" id="resetCellBtn" data-on-click="resetCell()" title="Remove this entry and let the schedule auto-fill this cell">Reset to auto</button>
       </span>
       <span style="display:flex;gap:8px">
-        <button class="btn" onclick="closeCell()">Cancel</button>
-        <button class="btn accent" onclick="saveCell()">Save</button>
+        <button class="btn" data-on-click="closeCell()">Cancel</button>
+        <button class="btn accent" data-on-click="saveCell()">Save</button>
       </span>
     </div>
   </div>
@@ -982,20 +992,20 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <select class="gsel" id="gSel"><option value="A">Group A</option><option value="B">Group B</option></select>
     <div class="slbl">Position in list</div>
     <div style="display:flex;gap:8px;margin-bottom:1rem">
-      <button class="btn sm" onclick="moveRn(-1)" title="Move up one position">▲ Move up</button>
-      <button class="btn sm" onclick="moveRn(1)" title="Move down one position">▼ Move down</button>
+      <button class="btn sm" data-on-click="moveRn(-1)" title="Move up one position">▲ Move up</button>
+      <button class="btn sm" data-on-click="moveRn(1)" title="Move down one position">▼ Move down</button>
     </div>
     <div class="slbl">Swap turn with another RN</div>
     <div style="display:flex;gap:8px;margin-bottom:6px">
       <select class="gsel" id="swapSel" style="margin-bottom:0"></select>
-      <button class="btn sm" onclick="swapRn()" title="Trade groups and list positions — the two RNs exchange turns, nobody else moves">Swap</button>
+      <button class="btn sm" data-on-click="swapRn()" title="Trade groups and list positions — the two RNs exchange turns, nobody else moves">Swap</button>
     </div>
     <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:1rem;line-height:var(--lh-normal)">The two trade groups and places in the list, so they take each other's night and weekend turns. Everyone else keeps their turn.</div>
     <div class="mactions" style="justify-content:space-between">
-      <button class="btn danger" onclick="removeRN(mEditIdx)" title="Remove this RN from the roster">Delete RN</button>
+      <button class="btn danger" data-on-click="removeEditedRN()" title="Remove this RN from the roster">Delete RN</button>
       <span style="display:flex;gap:8px">
-        <button class="btn" onclick="closeNameM()">Cancel</button>
-        <button class="btn accent" onclick="saveName()">Save</button>
+        <button class="btn" data-on-click="closeNameM()">Cancel</button>
+        <button class="btn accent" data-on-click="saveName()">Save</button>
       </span>
     </div>
   </div>
@@ -1005,9 +1015,9 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
     <h3>Change history</h3>
     <div class="hist-list" id="histList"></div>
     <div class="mactions" style="margin-top:1rem">
-      <button class="btn" onclick="clearHistory()">Clear all</button>
-      <button class="btn" onclick="undo()" title="Undo last change">Undo last</button>
-      <button class="btn accent" onclick="closeHistory()">Close</button>
+      <button class="btn" data-on-click="clearHistory()">Clear all</button>
+      <button class="btn" data-on-click="undo()" title="Undo last change">Undo last</button>
+      <button class="btn accent" data-on-click="closeHistory()">Close</button>
     </div>
   </div>
 </div>
@@ -1057,6 +1067,64 @@ window.addEventListener('unhandledrejection',e=>{
 document.addEventListener('securitypolicyviolation',e=>{
   noteProblem('The page was stopped from loading or contacting something',`${e.blockedURI||'inline'} (${e.violatedDirective})`);
 });
+
+/* ---------- buttons without inline code (audit H3) ---------- */
+// Buttons and fields say what they do in a data-on-<event> attribute holding one call,
+// e.g. data-on-click="reqDelete('2026-11-16','u12')". Nothing here evaluates text: the
+// call is parsed into a global function's name and plain values (numbers, quoted text,
+// true/false/null, this, event, this.value, this.checked), then that function is called.
+// That is what lets the security policy refuse all inline script. Events are handled at
+// the document and walk up from the element that was hit, so nested handlers still run
+// inner first and event.stopPropagation() still stops the outer ones.
+const ON_EVENTS={click:'click',change:'change',keydown:'keydown',focusin:'focus',drop:'drop',dragstart:'dragstart',dragover:'dragover',dragend:'dragend'};
+const ON_CALL=/^\s*([A-Za-z_$][\w$]*)\s*\(([\s\S]*)\)\s*;?\s*$/;
+const ON_ARG=/\s*(-?\d+(?:\.\d+)?|'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|true|false|null|this\.value|this\.checked|this|event)\s*(,|$)/y;
+const onParsed=new Map();
+function onParse(code){
+  if(onParsed.has(code))return onParsed.get(code);
+  let r=null;const m=ON_CALL.exec(code);
+  if(m){
+    const args=[],src=m[2];let ok=true;ON_ARG.lastIndex=0;
+    if(src.trim())while(ON_ARG.lastIndex<src.length){
+      const at=ON_ARG.lastIndex,t=ON_ARG.exec(src);
+      if(!t||t.index!==at){ok=false;break;}
+      args.push(t[1]);if(!t[2])break;
+    }
+    if(ok&&(!src.trim()||ON_ARG.lastIndex>=src.length))r={name:m[1],args};
+  }
+  onParsed.set(code,r);return r;
+}
+function onValue(tok,el,ev){
+  if(tok==='this')return el;
+  if(tok==='event')return ev;
+  if(tok==='this.value')return el.value;
+  if(tok==='this.checked')return el.checked;
+  if(tok==='true')return true;
+  if(tok==='false')return false;
+  if(tok==='null')return null;
+  if(tok[0]==="'"||tok[0]==='"')return tok.slice(1,-1).replace(/\\(.)/g,'$1');
+  return Number(tok);
+}
+function onRun(el,ev,kind){
+  const code=el.getAttribute('data-on-'+kind),call=onParse(code);
+  const fn=call&&Object.prototype.hasOwnProperty.call(window,call.name)?window[call.name]:null;
+  if(typeof fn!=='function'){noteProblem('A button is wired to something that does not exist',code);return;}
+  fn(...call.args.map(t=>onValue(t,el,ev)));
+}
+for(const type in ON_EVENTS){
+  const kind=ON_EVENTS[type],attr='data-on-'+kind;
+  document.addEventListener(type,ev=>{
+    for(let el=ev.target instanceof Element?ev.target:ev.target&&ev.target.parentElement;el&&el.nodeType===1;el=el.parentElement){
+      if(!el.hasAttribute(attr))continue;
+      try{onRun(el,ev,kind);}catch(err){noteProblem(err&&err.message||String(err),el.getAttribute(attr));}
+      if(ev.cancelBubble)break;
+    }
+  });
+}
+function openImportPicker(){document.getElementById('importFile').click();}
+function lockForgotKey(ev){if(ev.key==='Enter')lockForgot();}
+function selectAll(el){if(el&&el.select)el.select();}
+function removeEditedRN(){removeRN(mEditIdx);}
 const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 // the five core day shifts — the pool the auto-generator fills from (never custom),
 // the columns of the staffing-minimums grid, and the base of every derived table
@@ -1573,6 +1641,27 @@ const stable=v=>JSON.stringify(v,(k,x)=>isObj(x)?Object.keys(x).sort().reduce((o
 const mineStr=()=>stable(cloudStateObj());
 const DEVICE_ID=(()=>{try{let d=localStorage.getItem('rn_device');if(!d){d=newId();localStorage.setItem('rn_device',d);}return d;}catch(e){return newId();}})();
 let syncBaseStr=null,rosterReady=false,pushing=false,pushAgain=false,pendingRemote=null,retryTimer=null;
+/* ---- how big the cloud roster is (audit H2) ---- */
+// The whole roster is one Firestore document, and Firestore refuses a document over
+// 1 MiB. It grows ~144 KB a year with every fortnight locked, so the limit is years
+// away — but when it comes, saves would fail. The Cloud window shows the size, warns at
+// 70% and again at 90%, and a save that would not fit is never sent: it stays on this
+// device and the red banner says why. JSON bytes slightly overstate Firestore's own
+// count, so the warnings come a little early, never late.
+const DOC_LIMIT=1048576,DOC_WARN=0.7,DOC_BAD=0.9;
+let cloudBytes=0,cloudBytesTop=[],cloudSizeWarned=0;
+const docBytes=o=>new TextEncoder().encode(JSON.stringify(o)).length;
+function noteDocSize(doc){
+  cloudBytes=docBytes(doc);
+  const st=isObj(doc&&doc.state)?doc.state:{};
+  cloudBytesTop=Object.keys(st).map(k=>[k,docBytes(st[k])]).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const level=cloudBytes>=DOC_LIMIT*DOC_BAD?2:cloudBytes>=DOC_LIMIT*DOC_WARN?1:0;
+  if(level===2&&cloudSizeWarned<2)
+    noteProblem(`The cloud roster is ${sizeText(cloudBytes)} of the 1 MB Firestore allows. Saves will stop working when it is full: export a backup and ask for old fortnights to be archived`);
+  cloudSizeWarned=Math.max(cloudSizeWarned,level);
+}
+const sizeText=b=>b>=1048576?(b/1048576).toFixed(2)+' MB':Math.max(1,Math.round(b/1024))+' KB';
+const SIZE_PARTS={lockedCycles:'locked fortnights',frozen:'generated fortnights',genPlan:'partly generated plans',overrides:'requests and entries',notes:'comments',staffShifts:'support-staff shifts',history:'history',flags:'flags'};
 function rosterKnown(uid){try{return localStorage.getItem('rn_roster_uid')===uid;}catch(e){return false;}}
 function loadBase(uid){syncBaseStr=null;try{if(rosterKnown(uid))syncBaseStr=localStorage.getItem('rn_base');}catch(e){}}
 function setBase(state,uid){
@@ -1701,6 +1790,7 @@ function connectRoster(uid){
 }
 // the account's roster arrived (first load, or another device saved)
 function onRemote(uid,d){
+  noteDocSize(d);
   const theirs=d.state,rev=Number.isInteger(d.rev)?d.rev:0;
   const same=stable(theirs)===mineStr();
   if(!rosterKnown(uid)){                         // first time this device meets this account's roster
@@ -1774,8 +1864,10 @@ function pushCloud(){
       const items=[...new Set(clashes.map(clashText))];
       entry={id:rev,by:DEVICE_ID,at:Date.now(),n:items.length,items:items.slice(0,12)};log.push(entry);
     }
-    tx.set(ref,{state,updatedAt:Date.now(),rev,clashes:log.slice(-5)});
-    return {state,rev,entry};
+    const doc={state,updatedAt:Date.now(),rev,clashes:log.slice(-5)};
+    if(docBytes(doc)>DOC_LIMIT-4096)throw Object.assign(new Error('roster too large for one cloud document'),{code:'snv2/too-large',doc});
+    tx.set(ref,doc);
+    return {state,rev,entry,doc};
   })).then(r=>{
     pushing=false;
     if(uid!==cloudUid)return;
@@ -1783,7 +1875,7 @@ function pushCloud(){
     // is replayed on top of it, then goes up with the next save.
     const now=clone(cloudStateObj());
     const next=stable(now)===myStr?r.state:mergeState(mine,now,r.state).state;
-    setBase(r.state,uid);
+    setBase(r.state,uid);noteDocSize(r.doc);
     if(stable(next)!==stable(now))adoptCloudState(next,'');
     if(r.entry)noteClash(r.entry,true);
     markClashSeen(uid,r.rev);
@@ -1795,6 +1887,11 @@ function pushCloud(){
     pushing=false;
     if(uid!==cloudUid)return;
     const code=(e&&e.code)||'',offline=code==='unavailable'||navigator.onLine===false;
+    if(code==='snv2/too-large'){
+      noteDocSize(e.doc);cloudStatus='full';updateCloudUI();
+      noteProblem(`The roster no longer fits in the cloud (${sizeText(cloudBytes)}; Firestore allows 1 MB). Your changes are kept on this device but are NOT being sent to your account. Export a backup now`);
+      return;
+    }
     if(!offline)console.error('cloud push failed',e);
     cloudStatus=offline?'waiting':'error';updateCloudUI();
     // offline, or lost a race with another device: the change is still on this device — try again
@@ -1807,7 +1904,7 @@ window.addEventListener('offline',()=>updateCloudUI());
 function updateCloudUI(){
   const b=document.getElementById('cloudBtn'); if(!b)return;
   const cloud='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 18 18z"/></svg>';
-  const map={off:['Cloud',''],connecting:['Syncing…','warn'],synced:['Synced','ok'],error:['Cloud error','bad'],unavailable:['Offline',''],waiting:['Not sent yet','warn']};
+  const map={off:['Cloud',''],connecting:['Syncing…','warn'],synced:['Synced','ok'],error:['Cloud error','bad'],unavailable:['Offline',''],waiting:['Not sent yet','warn'],full:['Cloud full','bad']};
   const shown=cloudStatus==='connecting'&&navigator.onLine===false?'unavailable':cloudStatus;
   const [label,cls]=map[shown]||map.off;
   b.className='btn ghost cloud-'+(cls||'');
@@ -1819,8 +1916,23 @@ function updateCloudUI(){
       synced:'✓ The roster is saved to '+who+' and kept in step on every device signed in with it.',
       error:'The cloud refused the roster. Check the internet connection, and that the rules in firestore.rules are published in the Firebase console (SECURITY.md).',
       waiting:'No connection: your changes are kept on this device and are sent as soon as the connection is back.',
+      full:'The roster is too large for the cloud. Changes are kept on this device only — export a backup.',
       unavailable:'Offline: the app is working from this device only. Changes are saved here and sent to your account when the page is next opened with a connection.'};
     msg.textContent=m[shown]||m.off;
+  }
+  const box=document.getElementById('cloudSize');
+  if(box){
+    const on=!!cloudUid&&cloudBytes>0&&cloudStatus!=='unavailable';box.hidden=!on;
+    if(on){
+      const pct=Math.min(100,Math.round(cloudBytes/DOC_LIMIT*100)),lvl=cloudBytes>=DOC_LIMIT*DOC_BAD?'bad':cloudBytes>=DOC_LIMIT*DOC_WARN?'warn':'';
+      box.className='csize'+(lvl?' '+lvl:'');
+      document.getElementById('cloudSizeFill').style.width=Math.max(1,pct)+'%';
+      const top=cloudBytesTop.filter(t=>t[1]>=1024).map(([k,b])=>`${SIZE_PARTS[k]||k} ${sizeText(b)}`).join(', ');
+      document.getElementById('cloudSizeMsg').textContent=`Cloud roster: ${sizeText(cloudBytes)} of 1 MB (${pct}%)`+
+        (lvl==='bad'?'. Nearly full — saves will stop when it is. Export a backup and ask for old fortnights to be archived.':
+         lvl==='warn'?'. Getting large: plenty of room for now, but plan to archive old fortnights.':'.')+
+        (top?` Largest: ${top}.`:'');
+    }
   }
   const sec=document.getElementById('cloudSecureMsg');
   if(sec){
@@ -2097,11 +2209,11 @@ function renderStaffReqList(){
     const at=r.at?new Date(r.at):null;
     const when=at?`received ${fmt(at)} ${at.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`:'';
     return `<div class="req-row sreq-row${r.done?' done':''}">`+
-      `<input type="checkbox"${r.done?' checked':''} onchange="sreqSetDone('${escapeHtml(r.id)}',this.checked)" title="Tick when you have dealt with this request" aria-label="Done">`+
+      `<input type="checkbox"${r.done?' checked':''} data-on-change="sreqSetDone('${escapeHtml(r.id)}',this.checked)" title="Tick when you have dealt with this request" aria-label="Done">`+
       `<span class="rr-rn">${escapeHtml(sreqName(r))}</span>`+
       `<span class="rr-date">${escapeHtml(sreqDatesLabel(r.dates))}</span>`+
       `<span class="rr-date sreq-at">${escapeHtml(when)}</span>`+
-      `<button class="rr-del" title="Delete this request" aria-label="Delete this request" onclick="sreqDelete('${escapeHtml(r.id)}')">✕</button>`+
+      `<button class="rr-del" title="Delete this request" aria-label="Delete this request" data-on-click="sreqDelete('${escapeHtml(r.id)}')">✕</button>`+
       `<span class="sreq-why">${escapeHtml(r.reason)}</span></div>`;
   }).join('');
 }
@@ -2374,11 +2486,11 @@ function renderGrid(){
     const ok=tot===7;
     if(!ok)allOk=false;
     const wc=ok?'wk-ok':'wk-warn';
-    h+=`<tr ondragover="rowDragOver(event)" ondrop="rowDrop(event,${pos})"><td class="rn-col"><span class="drag-h" draggable="true" ondragstart="rowDragStart(event,${pos})" ondragend="rowDragEnd()" title="Drag to reorder">⠿</span><span class="rn-name" onclick="openNameM(${i})">${escapeHtml(names[i])}</span><span class="rn-grp" style="color:${gc}">${groups[i]}</span></td>`;
+    h+=`<tr data-on-dragover="rowDragOver(event,this)" data-on-drop="rowDrop(event,${pos})"><td class="rn-col"><span class="drag-h" draggable="true" data-on-dragstart="rowDragStart(event,${pos})" data-on-dragend="rowDragEnd()" title="Drag to reorder">⠿</span><span class="rn-name" data-on-click="openNameM(${i})">${escapeHtml(names[i])}</span><span class="rn-grp" style="color:${gc}">${groups[i]}</span></td>`;
     for(let d=0;d<14;d++){const s=sh[i][d];
       const fl=isFlagged(rid(i),days[d])?' flagged':'';
       const nt=noteFor(rid(i),days[d]);
-      h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} onclick="openCellM(${i},${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;}
+      h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} data-on-click="openCellM(${i},${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;}
     h+=`<td class="sep wk-num ${wc}">${w1}</td><td class="sep wk-num ${wc}">${w2}</td><td class="sep wk-num ${wc}">${tot}</td></tr>`;
   });
 
@@ -2399,14 +2511,14 @@ function renderGrid(){
   for(const g of STAFF_GROUPS){
     h+=`<tr class="grp-row"><td class="grp-lbl">${escapeHtml(staffGroupLabel(g.key))}</td><td colspan="16"></td></tr>`;
     for(const p of staffOf(g.key)){
-      h+=`<tr><td class="rn-col"><input class="staff-name" value="${escapeHtml(p.name)}" onchange="setStaffName('${p.id}',this.value)" aria-label="Name"${cycleLocked()?' readonly':''}></td>`;
+      h+=`<tr><td class="rn-col"><input class="staff-name" value="${escapeHtml(p.name)}" data-on-change="setStaffName('${p.id}',this.value)" aria-label="Name"${cycleLocked()?' readonly':''}></td>`;
       let w1=0,w2=0;
       for(let d=0;d<14;d++){
         const s=staffShiftAt(p.id,days[d]);
         if(ENTRY_TYPES.has(s))(d<7?w1++:w2++);
         const fl=isFlagged(p.id,days[d])?' flagged':'';
         const nt=noteFor(p.id,days[d]);
-        h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} onclick="openStaffCellM('${p.id}',${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;
+        h+=`<td class="sh-cell ${(T(d)+fl+(nt?' has-note':'')).trim()}"${nt?` title="${escapeHtml(nt)}"`:''} data-on-click="openStaffCellM('${p.id}',${d})"><span class="sc s-${escapeHtml(s)}">${s==='OFF'?'Off':escapeHtml(s)}</span></td>`;
       }
       h+=`<td class="sep wk-num">${w1}</td><td class="sep wk-num">${w2}</td><td class="sep wk-num">${w1+w2}</td></tr>`;
     }
@@ -2493,93 +2605,97 @@ function fatigueReport(days,sh){
 // live health-check banner: watches the current schedule (including manual
 // edits) and surfaces staffing-rule problems that aren't otherwise obvious.
 // Display only — it never changes the schedule.
-function renderBanner(){
-  const{days,sh}=sched;
-  const el=document.getElementById('banner');
+// The live health-check banner, in parts (audit M1). Display only: it never changes
+// the schedule. bannerState() handles the fortnights where live checks would mislead;
+// bannerChecks() runs the rules; bannerHint() picks the one most useful hint.
+function bannerState(days,sh){
+  const key=cycleStartISO(cycleOffset);
   // Locked fortnight: a fixed record — say so instead of re-checking live rules
-  const LK=lockedCycles[cycleStartISO(cycleOffset)];
+  const LK=lockedCycles[key];
   if(LK){
     const at=new Date(LK.at);
-    el.className='banner';
-    el.innerHTML=`<span class="bic">🔒</span><div>This fortnight is <b>locked</b>${isNaN(at)?'':` since <b>${fmt(at)} ${at.getFullYear()}</b>`} — view only. It shows exactly what was locked: later changes to rules, requests, the roster or lists don't affect it. Press <b>Locked</b> to unlock.</div>`;
-    return;
+    return {cls:'banner',html:`<span class="bic">🔒</span><div>This fortnight is <b>locked</b>${isNaN(at)?'':` since <b>${fmt(at)} ${at.getFullYear()}</b>`} — view only. It shows exactly what was locked: later changes to rules, requests, the roster or lists don't affect it. Press <b>Locked</b> to unlock.</div>`};
   }
   // Manual mode, empty (ungenerated) fortnight: friendly prompt, no false warnings
-  if(manualMode&&!committedCycles[cycleStartISO(cycleOffset)]){
-    const reqCount=(()=>{let c=0;for(let d=0;d<14;d++){const o=overrides[isoKey(days[d])];if(o)c+=Object.keys(o).length;}return c;})();
-    el.className='banner';
-    el.innerHTML=`<span class="bic">▦</span><div>This fortnight is <b>empty</b>. Add staff requests in <b>Requests</b>${reqCount?` (<b>${reqCount}</b> entered)`:''}, then press <b>Generate</b> to fill it while respecting the rules, turns and requests.</div>`;
-    return;
+  if(manualMode&&!committedCycles[key]){
+    let reqCount=0;for(let d=0;d<14;d++){const o=overrides[isoKey(days[d])];if(o)reqCount+=Object.keys(o).length;}
+    return {cls:'banner',html:`<span class="bic">▦</span><div>This fortnight is <b>empty</b>. Add staff requests in <b>Requests</b>${reqCount?` (<b>${reqCount}</b> entered)`:''}, then press <b>Generate</b> to fill it while respecting the rules, turns and requests.</div>`};
   }
   // Part-generated fortnight (Settings → Generate): the blank parts are reserved,
   // not missing, so say what is in and what is left instead of flagging every
   // reserved night/weekend as short. A week over its split is still flagged.
-  const doneParts=partsDone(cycleStartISO(cycleOffset));
+  const doneParts=partsDone(key);
   if(doneParts.length&&doneParts.length<ALL_UNITS.length){
-    const cr0=conflictReport(cycleOffset,sh);
-    const over=cr0.weekOver.map(o=>`<b>${escapeHtml(names[o.i])}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`);
+    const over=conflictReport(cycleOffset,sh).weekOver.map(o=>`<b>${escapeHtml(names[o.i])}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`);
     const leftU=ALL_UNITS.filter(u=>!doneParts.includes(u)),left=describeUnits(leftU);
-    el.className='banner'+(over.length?' bad':'');
-    el.innerHTML=`<span class="bic">▦</span><div>${over.length?over.join(', ')+' &nbsp;·&nbsp; ':''}Partly generated: <b>${describeUnits(doneParts)}</b>. Still to generate: <b>${left}</b> — tick ${leftU.length>1?'them':'it'} in <b>Settings → Generate</b>, then press <b>Generate</b>. Staffing checks run once every part is in.</div>`;
-    return;
+    return {cls:'banner'+(over.length?' bad':''),html:`<span class="bic">▦</span><div>${over.length?over.join(', ')+' &nbsp;·&nbsp; ':''}Partly generated: <b>${describeUnits(doneParts)}</b>. Still to generate: <b>${left}</b> — tick ${leftU.length>1?'them':'it'} in <b>Settings → Generate</b>, then press <b>Generate</b>. Staffing checks run once every part is in.</div>`};
   }
-  // 1) days below minimum staffing (any shift type under DAILY_MIN)
+  return null;
+}
+function bannerChecks(days,sh){
+  const nm=i=>escapeHtml(names[i]),cr=conflictReport(cycleOffset,sh);
+  // days below minimum staffing (any shift type under DAILY_MIN)
   const short=[];
   for(let d=0;d<14;d++)if(dayShort(sh,d)||nightShort(sh,d))short.push(`${DAYS[d%7]} ${fmt(days[d])}`);
-  // 2) exact-7 breaks, named + flagged when the nurse is on the night turn
-  const cr=conflictReport(cycleOffset,sh);
-  const nm=i=>escapeHtml(names[i]);
-  const overNames=cr.over.map(o=>`${nm(o.i)} (${o.tot}${o.onNight?', nights':''})`);
-  const underNames=cr.under.map(o=>`${nm(o.i)} (${o.tot}${o.onNight?', nights':''})`);
-  const notSeven=cr.over.length+cr.under.length;
-  const nightTurnClash=cr.over.some(o=>o.onNight)||cr.under.some(o=>o.onNight);
   // night-turn nurses whose nights are cancelled by a locked entry
   // (only where the night really is short — the generator backfills most of them)
   const shortNight=new Set(cr.nightsShort.map(x=>x.d));
   const blockers=nightBlockers(cycleOffset).filter(x=>x.blocked.some(d=>shortNight.has(d)));
-  const blockedMsg=blockers.length
-    ? `${blockers.map(x=>`<b>${nm(x.i)}</b> (${x.blocked.length})`).join(', ')} — on the night turn but ${blockers.length>1?'their':'this'} night days carry other entries, so those nights are <b>not staffed</b>. Settings → Night cycle → <b>Free the night turn</b>, or clear them in Requests.`
-    : '';
-  // 3) nurses working more than 3 days in a row
+  // nurses working more than 3 days in a row
   let longRuns=0;
   for(let i=0;i<N;i++)if(maxRunLen(sh[i],WORK_TYPES)>3)longRuns++;
-  // 4) nights off the N7 minimum (below that weekday's minimum, or above the night team)
-  const nightGaps=[...cr.nightsShort,...cr.nightsOver].map(x=>`${DAYS[x.d%7]} ${fmt(days[x.d])}: ${x.c} of ${x.need}`);
-  // 5) advisory fatigue rules (soft warnings — never rule-breaking)
-  const ft=fatigueReport(days,sh);
-  const fatigueParts=[];
+  // advisory fatigue rules (soft warnings — never rule-breaking)
+  const ft=fatigueReport(days,sh),fatigueParts=[];
   if(ft.turn.length)fatigueParts.push(`<b>${ft.turn.length}</b> night→day turnaround${ft.turn.length>1?'s':''}: ${ft.turn.map(nm).join(', ')}`);
   if(ft.overN.length)fatigueParts.push(`<b>${ft.overN.length}</b> over ${fatigue.maxNights} nights/month: ${ft.overN.map(o=>nm(o.i)+' ('+o.n+')').join(', ')}`);
   if(ft.rest.length)fatigueParts.push(`<b>${ft.rest.length}</b> with under ${fatigue.minRest} day${fatigue.minRest>1?'s':''} off between stretches: ${ft.rest.map(nm).join(', ')}`);
-  const anyFatigue=fatigueParts.length>0;
-
-  // 2b) a week over its split (4/3 · 3/4) — the manager entered too many
-  const weekOverMsg=cr.weekOver.map(o=>`<b>${nm(o.i)}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`);
-  if(!short.length&&!notSeven&&!longRuns&&!nightGaps.length&&!anyFatigue&&!blockedMsg&&!weekOverMsg.length){
+  return {
+    short,longRuns,fatigueParts,
+    overNames:cr.over.map(o=>`${nm(o.i)} (${o.tot}${o.onNight?', nights':''})`),     // exact-7 breaks, flagged
+    underNames:cr.under.map(o=>`${nm(o.i)} (${o.tot}${o.onNight?', nights':''})`),    // when on the night turn
+    notSeven:cr.over.length+cr.under.length,
+    nightTurnClash:cr.over.some(o=>o.onNight)||cr.under.some(o=>o.onNight),
+    blockedMsg:blockers.length
+      ? `${blockers.map(x=>`<b>${nm(x.i)}</b> (${x.blocked.length})`).join(', ')} — on the night turn but ${blockers.length>1?'their':'this'} night days carry other entries, so those nights are <b>not staffed</b>. Settings → Night cycle → <b>Free the night turn</b>, or clear them in Requests.`
+      : '',
+    // nights off the N7 minimum (below that weekday's minimum, or above the night team)
+    nightGaps:[...cr.nightsShort,...cr.nightsOver].map(x=>`${DAYS[x.d%7]} ${fmt(days[x.d])}: ${x.c} of ${x.need}`),
+    // a week over its split (4/3 · 3/4) — the manager entered too many
+    weekOverMsg:cr.weekOver.map(o=>`<b>${nm(o.i)}: ${o.n} duties in week ${o.w+1} (max ${o.max})</b>`)
+  };
+}
+function bannerHint(c){
+  if(c.weekOverMsg.length)return '<div class="bhint">More duties were entered in that week than the 4/3 · 3/4 split allows. Entries are never removed automatically — clear one in <b>Requests</b> or on the grid.</div>';
+  if(c.blockedMsg)return '<div class="bhint">A locked entry sits on a night-turn nurse\'s night day, so that night is not staffed. Use <b>Settings → Night cycle → Free the night turn</b> to clear the day-shift entries that are cancelling it (holidays, vacations and requested days off are kept).</div>';
+  if(c.nightTurnClash)return '<div class="bhint">A named nurse above is on the <b>night turn</b> this fortnight and has a request or manual entry that collides with their nights — an entry on a night day cancels that night, and one that could not be absorbed leaves them off 7. Remove it in <b>Requests</b>, or fix the night cells by hand.</div>';
+  if(c.nightGaps.length)return '<div class="bhint">Nights are manual: assign a replacement yourself by clicking the night cell.</div>';
+  if(c.short.length)return '<div class="bhint">Tip: usually caused by requests that can\'t all be met (e.g. too many off the same day), a manual edit, or an unbalanced A/B group split.</div>';
+  if(c.fatigueParts.length&&!c.longRuns)return '<div class="bhint">These are advisory rest/fatigue warnings — fix by hand, or adjust the limits in <b>Settings → Fatigue rules</b>.</div>';
+  return '';
+}
+function renderBanner(){
+  const{days,sh}=sched,el=document.getElementById('banner');
+  const special=bannerState(days,sh);
+  if(special){el.className=special.cls;el.innerHTML=special.html;return;}
+  const c=bannerChecks(days,sh);
+  const hard=c.short.length||c.notSeven||c.nightGaps.length||c.blockedMsg||c.weekOverMsg.length;
+  if(!hard&&!c.longRuns&&!c.fatigueParts.length){
     el.className='banner ok';
     el.innerHTML='<span class="bic">✓</span><span>All staffing &amp; fatigue rules satisfied.</span>';
     return;
   }
   const parts=[];
-  if(weekOverMsg.length)parts.push(weekOverMsg.join(', '));
-  if(blockedMsg)parts.push(`<b>night turn cancelled</b> for ${blockedMsg}`);
-  if(nightGaps.length)parts.push(`<b>${nightGaps.length}</b> night${nightGaps.length>1?'s':''} off the N7 minimum (${nightGaps.join(', ')})`);
-  if(short.length)parts.push(`<b>${short.length}</b> day${short.length>1?'s':''} below minimum staffing (${short.join(', ')})`);
-  if(overNames.length)parts.push(`<b>${overNames.length}</b> over 7 shifts: ${overNames.join(', ')}`);
-  if(underNames.length)parts.push(`<b>${underNames.length}</b> under 7 shifts: ${underNames.join(', ')}`);
-  if(longRuns)parts.push(`<b>${longRuns}</b> nurse${longRuns>1?'s':''} working 4+ days in a row`);
-  parts.push(...fatigueParts);   // fatigue warnings come last (advisory)
+  if(c.weekOverMsg.length)parts.push(c.weekOverMsg.join(', '));
+  if(c.blockedMsg)parts.push(`<b>night turn cancelled</b> for ${c.blockedMsg}`);
+  if(c.nightGaps.length)parts.push(`<b>${c.nightGaps.length}</b> night${c.nightGaps.length>1?'s':''} off the N7 minimum (${c.nightGaps.join(', ')})`);
+  if(c.short.length)parts.push(`<b>${c.short.length}</b> day${c.short.length>1?'s':''} below minimum staffing (${c.short.join(', ')})`);
+  if(c.overNames.length)parts.push(`<b>${c.overNames.length}</b> over 7 shifts: ${c.overNames.join(', ')}`);
+  if(c.underNames.length)parts.push(`<b>${c.underNames.length}</b> under 7 shifts: ${c.underNames.join(', ')}`);
+  if(c.longRuns)parts.push(`<b>${c.longRuns}</b> nurse${c.longRuns>1?'s':''} working 4+ days in a row`);
+  parts.push(...c.fatigueParts);   // fatigue warnings come last (advisory)
   // hard staffing problems are red (bad); fatigue-only / long-run is amber (warn)
-  const level=(short.length||notSeven||nightGaps.length||blockedMsg||weekOverMsg.length)?'bad':'warn';
-  let hint='';
-  if(weekOverMsg.length)hint='<div class="bhint">More duties were entered in that week than the 4/3 · 3/4 split allows. Entries are never removed automatically — clear one in <b>Requests</b> or on the grid.</div>';
-  else if(blockedMsg)hint='<div class="bhint">A locked entry sits on a night-turn nurse\'s night day, so that night is not staffed. Use <b>Settings → Night cycle → Free the night turn</b> to clear the day-shift entries that are cancelling it (holidays, vacations and requested days off are kept).</div>';
-  else if(nightTurnClash)hint='<div class="bhint">A named nurse above is on the <b>night turn</b> this fortnight and has a request or manual entry that collides with their nights — an entry on a night day cancels that night, and one that could not be absorbed leaves them off 7. Remove it in <b>Requests</b>, or fix the night cells by hand.</div>';
-  else if(nightGaps.length)hint='<div class="bhint">Nights are manual: assign a replacement yourself by clicking the night cell.</div>';
-  else if(short.length)hint='<div class="bhint">Tip: usually caused by requests that can\'t all be met (e.g. too many off the same day), a manual edit, or an unbalanced A/B group split.</div>';
-  else if(anyFatigue&&!longRuns)hint='<div class="bhint">These are advisory rest/fatigue warnings — fix by hand, or adjust the limits in <b>Settings → Fatigue rules</b>.</div>';
-  el.className='banner '+level;
-  el.innerHTML=`<span class="bic">⚠</span><div>${parts.join(' &nbsp;·&nbsp; ')}${hint}</div>`;
+  el.className='banner '+(hard?'bad':'warn');
+  el.innerHTML=`<span class="bic">⚠</span><div>${parts.join(' &nbsp;·&nbsp; ')}${bannerHint(c)}</div>`;
 }
 
 function renderTracker(){
@@ -2607,10 +2723,10 @@ function renderTracker(){
     const vacRemCls=vacRem<0?'bal-neg':vacRem<=3?'bal-low':'vac-val';
     h+=`<tr>
       <td class="tn"><span style="color:${gc};font-size:var(--fs-xs);font-family:var(--font-mono);font-weight:600;margin-right:5px">${groups[i]}</span>${escapeHtml(names[i])}</td>
-      <td><input class="bal-input" type="number" min="0" max="99" value="${holBal[i]}" onchange="setHolBal(${i},this.value)" style="color:var(--hol-fg)"></td>
+      <td><input class="bal-input" type="number" min="0" max="99" value="${holBal[i]}" data-on-change="setHolBal(${i},this.value)" style="color:var(--hol-fg)"></td>
       <td class="hol-val">${holUsed}</td>
       <td class="${holRemCls}">${holRem}</td>
-      <td><input class="bal-input" type="number" min="0" max="99" value="${vacBal[i]}" onchange="setVacBal(${i},this.value)" style="color:var(--vac-fg)"></td>
+      <td><input class="bal-input" type="number" min="0" max="99" value="${vacBal[i]}" data-on-change="setVacBal(${i},this.value)" style="color:var(--vac-fg)"></td>
       <td class="vac-val">${vacUsed}</td>
       <td class="${vacRemCls}">${vacRem}</td>
       <td class="sl-val">${slUsed}</td>
@@ -2685,7 +2801,7 @@ function renderGenTab(){
   ensureGenParts();
   for(const p of GEN_PARTS){const e=document.getElementById('gp'+GEN_LABEL[p]);if(e)e.checked=genParts[p];}
   const sb=document.getElementById('gpShifts');
-  if(sb)sb.innerHTML=GEN_SHIFTS.map(x=>`<label class="gp-shift"><input type="checkbox" id="gpS_${x}"${genParts.shifts[x]?' checked':''} onchange="setGenPart('${x}',this.checked)"> <span class="sc s-${x}">${x}</span> <span class="gp-sub">${escapeHtml(LABELS_M[x]||'')}</span></label>`).join('');
+  if(sb)sb.innerHTML=GEN_SHIFTS.map(x=>`<label class="gp-shift"><input type="checkbox" id="gpS_${x}"${genParts.shifts[x]?' checked':''} data-on-change="setGenPart('${x}',this.checked)"> <span class="sc s-${x}">${x}</span> <span class="gp-sub">${escapeHtml(LABELS_M[x]||'')}</span></label>`).join('');
   const st=document.getElementById('genStatus');if(!st)return;
   const done=partsDone(cycleStartISO(cycleOffset)),left=ALL_UNITS.filter(u=>!done.includes(u));
   const tk=tickedUnits();
@@ -2719,11 +2835,11 @@ function renderSettings(){
       h+=`<div class="sett-row${cls}">
         <span class="sett-slot">${pos+1}</span>
         <span class="sett-nm">${escapeHtml(names[i])}</span>${tag}
-        <button class="sett-btn swap${armed?' on':''}" onclick="settSwap(${i})" title="${armed?'Cancel swap':'Swap turn with another RN'}">⇄</button>
-        <button class="sett-btn" onclick="settMove(${i},-1)" title="Move up a slot"${pos===0?' disabled style="opacity:.3"':''}>▲</button>
-        <button class="sett-btn" onclick="settMove(${i},1)" title="Move down a slot"${pos===list.length-1?' disabled style="opacity:.3"':''}>▼</button>
-        <button class="sett-btn" onclick="settToGroup(${i},'${other}')" title="Move to Group ${other}">${gk==='A'?'→':'←'}</button>
-        <button class="sett-btn del" onclick="settRemove(${i})" title="Remove this RN">✕</button>
+        <button class="sett-btn swap${armed?' on':''}" data-on-click="settSwap(${i})" title="${armed?'Cancel swap':'Swap turn with another RN'}">⇄</button>
+        <button class="sett-btn" data-on-click="settMove(${i},-1)" title="Move up a slot"${pos===0?' disabled style="opacity:.3"':''}>▲</button>
+        <button class="sett-btn" data-on-click="settMove(${i},1)" title="Move down a slot"${pos===list.length-1?' disabled style="opacity:.3"':''}>▼</button>
+        <button class="sett-btn" data-on-click="settToGroup(${i},'${other}')" title="Move to Group ${other}">${gk==='A'?'→':'←'}</button>
+        <button class="sett-btn del" data-on-click="settRemove(${i})" title="Remove this RN">✕</button>
       </div>`;
     });
     return h+'</div>';
@@ -2804,9 +2920,9 @@ function renderNightTab(){
       if(first)c+=`<div class="sett-slot" style="display:block;margin:8px 0 2px;color:var(--muted-2)">Turn ${turn}</div>`;
       c+=`<div class="sett-row">
         <span class="sett-nm">${escapeHtml(nm)}</span>
-        <button class="sett-btn" onclick="nightMove('${id}',-1)" title="Earlier turn"${pos===0?' disabled style="opacity:.3"':''}>&#9650;</button>
-        <button class="sett-btn" onclick="nightMove('${id}',1)" title="Later turn"${pos===q.length-1?' disabled style="opacity:.3"':''}>&#9660;</button>
-        <button class="sett-btn del" onclick="nightRemove('${id}')" title="Remove from the night cycle">&#10005;</button>
+        <button class="sett-btn" data-on-click="nightMove('${id}',-1)" title="Earlier turn"${pos===0?' disabled style="opacity:.3"':''}>&#9650;</button>
+        <button class="sett-btn" data-on-click="nightMove('${id}',1)" title="Later turn"${pos===q.length-1?' disabled style="opacity:.3"':''}>&#9660;</button>
+        <button class="sett-btn del" data-on-click="nightRemove('${id}')" title="Remove from the night cycle">&#10005;</button>
       </div>`;
     });
     return c+'</div>';
@@ -2829,7 +2945,7 @@ function renderNightTab(){
   if(missing.length){
     h+=`<div class="mactions" style="margin-top:var(--sp-3)"><select id="nightAddSel" class="gsel">`+
        missing.map(x=>`<option value="${x.id}">${escapeHtml(x.nm)} (${x.g})</option>`).join('')+
-       `</select><button class="btn sm" onclick="nightAdd()">+ Add to night cycle</button></div>`;
+       `</select><button class="btn sm" data-on-click="nightAdd()">+ Add to night cycle</button></div>`;
   }
   // entries sitting on a night-turn nurse's night days cancel those nights
   const bl=nightBlockers(cycleOffset);
@@ -2837,10 +2953,10 @@ function renderNightTab(){
   if(hard.length){
     h+=`<div class="sett-swaphint" style="margin-top:var(--sp-3)">This cycle: ${hard.map(x=>`<b>${escapeHtml(names[x.i])}</b> (${x.blocked.length})`).join(', ')}
       ${hard.length>1?'are':'is'} on the night turn but ${hard.length>1?'their':'that'} night days carry other entries, so those nights are <b>not staffed</b>.</div>
-      <div class="mactions" style="margin-top:var(--sp-2)"><button class="btn sm" onclick="freeNightTurn()" title="Clear the day-shift entries cancelling this cycle's night turn">Free the night turn for this cycle</button></div>`;
+      <div class="mactions" style="margin-top:var(--sp-2)"><button class="btn sm" data-on-click="freeNightTurn()" title="Clear the day-shift entries cancelling this cycle's night turn">Free the night turn for this cycle</button></div>`;
   }
   if(absent.length)h+=`<div class="sett-note" style="margin-top:var(--sp-2)">${absent.map(x=>escapeHtml(names[x.i])).join(', ')} ${absent.length>1?'have':'has'} a holiday/vacation/sick leave/requested-off on a night day this cycle — those nights stay uncovered for you to fill by hand.</div>`;
-  if(custom)h+=`<div class="mactions" style="margin-top:var(--sp-2)"><button class="btn sm" onclick="nightReset()" title="Back to the default: every RN eligible">Reset to default (everyone)</button></div>`;
+  if(custom)h+=`<div class="mactions" style="margin-top:var(--sp-2)"><button class="btn sm" data-on-click="nightReset()" title="Back to the default: every RN eligible">Reset to default (everyone)</button></div>`;
   box.innerHTML=h;
 }
 // move an RN earlier/later in THEIR OWN group's night rotation (the two groups
@@ -2932,7 +3048,7 @@ function renderMinTab(){
       const dis=(wknd&&t!=='D7'&&t!=='N7');
       const tip=t==='N7'?'RNs on nights this day — staffed by the night cycle'
                         :(dis?'Weekend day cover is the fixed 2-RN turn':'Minimum RNs on this shift');
-      h+=`<div><input class="min-num${v?'':' zero'}" type="number" min="0" max="20" value="${v}"${dis?' disabled':''} title="${tip}" onchange="minSet(${d},'${t}',this.value)"></div>`;
+      h+=`<div><input class="min-num${v?'':' zero'}" type="number" min="0" max="20" value="${v}"${dis?' disabled':''} title="${tip}" data-on-change="minSet(${d},'${t}',this.value)"></div>`;
     }
     h+=`<div class="mh">${tot}</div>`;
   }
@@ -2971,16 +3087,16 @@ function renderShiftTab(){
   customShifts.forEach((s,i)=>{
     h+=`<div class="shift-row">
       <span class="leg-badge b-${s.code}" style="min-width:34px;text-align:center">${escapeHtml(s.code)}</span>
-      <input class="staff-label-in" value="${escapeHtml(s.label)}" onchange="setShiftLabel(${i},this.value)" placeholder="hours e.g. 10a–6p">
-      <input type="color" value="${s.color}" onchange="setShiftColor(${i},this.value)" title="Colour" class="shift-color">
-      <button class="sett-btn del" onclick="removeShift(${i})" title="Remove">✕</button>
+      <input class="staff-label-in" value="${escapeHtml(s.label)}" data-on-change="setShiftLabel(${i},this.value)" placeholder="hours e.g. 10a–6p">
+      <input type="color" value="${s.color}" data-on-change="setShiftColor(${i},this.value)" title="Colour" class="shift-color">
+      <button class="sett-btn del" data-on-click="removeShift(${i})" title="Remove">✕</button>
     </div>`;
   });
   h+=`<div class="shift-row" style="margin-top:10px">
       <input class="staff-label-in" id="newShiftCode" placeholder="code" maxlength="4" style="max-width:80px;text-transform:uppercase">
       <input class="staff-label-in" id="newShiftLabel" placeholder="hours e.g. 6a–2p">
       <input type="color" id="newShiftColor" value="#4aa3df" class="shift-color">
-      <button class="btn sm" onclick="addShift()">+ Add</button>
+      <button class="btn sm" data-on-click="addShift()">+ Add</button>
     </div><div id="shiftMsg" class="fatigue-sub" style="margin-top:6px"></div></div>`;
   box.innerHTML=h;
 }
@@ -3009,13 +3125,13 @@ function renderStaffTab(){
   for(const g of STAFF_GROUPS){
     const list=staffOf(g.key);
     h+=`<div class="staff-cfg"><div class="staff-cfg-head">
-      <input class="staff-label-in" value="${escapeHtml(staffGroupLabel(g.key))}" onchange="setStaffLabel('${g.key}',this.value)" aria-label="Group name">
+      <input class="staff-label-in" value="${escapeHtml(staffGroupLabel(g.key))}" data-on-change="setStaffLabel('${g.key}',this.value)" aria-label="Group name">
       <span class="fatigue-sub">(${list.length})</span>
-      <button class="btn sm" onclick="addStaff('${g.key}')">+ Add</button></div>`;
+      <button class="btn sm" data-on-click="addStaff('${g.key}')">+ Add</button></div>`;
     if(!list.length)h+='<div class="req-empty">Nobody in this group.</div>';
     for(const p of list){
-      h+=`<div class="staff-cfg-row"><input class="staff-label-in" value="${escapeHtml(p.name)}" onchange="setStaffName('${p.id}',this.value)" aria-label="Name">
-        <button class="sett-btn del" onclick="removeStaff('${p.id}')" title="Remove">✕</button></div>`;
+      h+=`<div class="staff-cfg-row"><input class="staff-label-in" value="${escapeHtml(p.name)}" data-on-change="setStaffName('${p.id}',this.value)" aria-label="Name">
+        <button class="sett-btn del" data-on-click="removeStaff('${p.id}')" title="Remove">✕</button></div>`;
     }
     h+='</div>';
   }
@@ -3044,21 +3160,21 @@ function renderDataTab(){
   box.innerHTML=`
     <div class="fatigue-box">
       <h4 class="fatigue-h">Default balances for new RNs</h4>
-      <label class="fatigue-row">Holiday <input type="number" id="defHolIn" min="0" max="99" class="fatigue-num" value="${defHol}" onchange="setDefBal('hol',this.value)"> days</label>
-      <label class="fatigue-row">Vacation <input type="number" id="defVacIn" min="0" max="99" class="fatigue-num" value="${defVac}" onchange="setDefBal('vac',this.value)"> days</label>
-      <div class="fatigue-row" style="margin-top:10px"><button class="btn sm" onclick="setAllBal()">Set ALL current RNs to these balances</button></div>
+      <label class="fatigue-row">Holiday <input type="number" id="defHolIn" min="0" max="99" class="fatigue-num" value="${defHol}" data-on-change="setDefBal('hol',this.value)"> days</label>
+      <label class="fatigue-row">Vacation <input type="number" id="defVacIn" min="0" max="99" class="fatigue-num" value="${defVac}" data-on-change="setDefBal('vac',this.value)"> days</label>
+      <div class="fatigue-row" style="margin-top:10px"><button class="btn sm" data-on-click="setAllBal()">Set ALL current RNs to these balances</button></div>
     </div>
     <div class="fatigue-box" style="margin-top:var(--sp-3)">
       <h4 class="fatigue-h">Generated fortnights <span class="fatigue-sub">(${Object.keys(frozen).length} stored)</span></h4>
       <div class="sett-note" style="margin:0 0 8px">A fortnight is saved exactly as it was generated, so cycles made before a rule change keep the old result. Rebuilding recomputes every stored fortnight with the current rules — <b>your requests, holidays and vacations are kept</b>.</div>
-      <div class="fatigue-row"><button class="btn sm" onclick="rebuildAllCycles()" title="Recompute every generated fortnight with the current rules">Rebuild all generated fortnights</button></div>
+      <div class="fatigue-row"><button class="btn sm" data-on-click="rebuildAllCycles()" title="Recompute every generated fortnight with the current rules">Rebuild all generated fortnights</button></div>
     </div>
     <div class="fatigue-box" style="margin-top:var(--sp-3)">
       <h4 class="fatigue-h">Backup &amp; reset</h4>
-      <div class="fatigue-row"><button class="btn sm" onclick="exportBackup()">Export backup</button>
-        <button class="btn sm" onclick="document.getElementById('importFile').click()">Import backup…</button></div>
-      <div class="fatigue-row" style="margin-top:6px"><button class="btn sm" onclick="pruneOld()" title="Delete stored generated grids for cycles far in the past">Prune old cycles</button>
-        <button class="btn sm" onclick="resetAll()" style="color:var(--neg)">Reset everything…</button></div>
+      <div class="fatigue-row"><button class="btn sm" data-on-click="exportBackup()">Export backup</button>
+        <button class="btn sm" data-on-click="openImportPicker()">Import backup…</button></div>
+      <div class="fatigue-row" style="margin-top:6px"><button class="btn sm" data-on-click="pruneOld()" title="Delete stored generated grids for cycles far in the past">Prune old cycles</button>
+        <button class="btn sm" data-on-click="resetAll()" style="color:var(--neg)">Reset everything…</button></div>
     </div>`;
 }
 function setDefBal(which,val){const v=Math.max(0,Math.min(99,parseInt(val)||0));if(which==='hol')defHol=v;else defVac=v;saveState();}
@@ -3206,7 +3322,7 @@ function removeRN(i){
 let dragSrcPos=null;
 function rowDragStart(e,pos){dragSrcPos=pos;e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',String(pos));}catch(_){}}
 function rowDragEnd(){dragSrcPos=null;document.querySelectorAll('#tbl tr.drag-over').forEach(r=>r.classList.remove('drag-over'));}
-function rowDragOver(e){if(dragSrcPos===null)return;e.preventDefault();e.dataTransfer.dropEffect='move';const tr=e.currentTarget;document.querySelectorAll('#tbl tr.drag-over').forEach(r=>{if(r!==tr)r.classList.remove('drag-over');});tr.classList.add('drag-over');}
+function rowDragOver(e,tr){if(dragSrcPos===null)return;e.preventDefault();e.dataTransfer.dropEffect='move';document.querySelectorAll('#tbl tr.drag-over').forEach(r=>{if(r!==tr)r.classList.remove('drag-over');});tr.classList.add('drag-over');}
 function rowDrop(e,pos){e.preventDefault();if(cycleLocked()){rowDragEnd();lockedToast();return;}const from=dragSrcPos;rowDragEnd();if(from===null||from===pos)return;moveInOrder(from,pos);}
 function moveInOrder(from,to){
   if(from<0||from>=order.length||to<0||to>=order.length)return;
@@ -3274,7 +3390,7 @@ function reqRenderDays(){
       : (overrides[iso]&&overrides[iso][rid(who.rn)]!==undefined);
     const has=exists?' has-req':'';
     const sel=reqSelDays.has(d)?' sel':'';
-    h+=`<div class="req-day${wknd}${sel}${has}" onclick="reqToggleDay(${d})" title="${has?'already has a request for this person':''}">
+    h+=`<div class="req-day${wknd}${sel}${has}" data-on-click="reqToggleDay(${d})" title="${has?'already has a request for this person':''}">
         <div class="rd-dn">${DAYS[d%7]}</div><div class="rd-dt">${fmt(days[d])}</div></div>`;
   }
   document.getElementById('reqDays').innerHTML=h;
@@ -3319,7 +3435,7 @@ function renderRequests(){
         `<span class="rr-date">${lbl}</span>`+
         (()=>{const w=(notes[it.k]&&notes[it.k][it.id])||'';return w?`<span class="rr-why" title="${escapeHtml(w)}">${escapeHtml(w)}</span>`:'';})()+
         `<span class="rr-badge b-${escapeHtml(it.t)}">${it.t==='REQ'?'Req off':escapeHtml(it.t)}</span>`+
-        `<button class="rr-del" title="Delete this request" onclick="reqDelete('${escapeHtml(it.k)}','${escapeHtml(it.id)}')">✕</button></div>`;
+        `<button class="rr-del" title="Delete this request" data-on-click="reqDelete('${escapeHtml(it.k)}','${escapeHtml(it.id)}')">✕</button></div>`;
     }).join('');
   }
 }
@@ -3668,7 +3784,7 @@ function toggleFlagBtn(){mFlag=!mFlag;updateFlagBtn();}
 function shiftOptionsHTML(){
   return SHIFT_GROUPS.map(g=>
     `<div class="mgroup"><div class="mgroup-lbl">${escapeHtml(g.label)}</div><div class="mgrid">`+
-    g.types.map(s=>`<button class="mbtn${mSel===s?' sel':''}" data-s="${escapeHtml(s)}" onclick="pickSh('${escapeHtml(s)}')">${escapeHtml(LABELS_M[s])}</button>`).join('')+
+    g.types.map(s=>`<button class="mbtn${mSel===s?' sel':''}" data-s="${escapeHtml(s)}" data-on-click="pickSh('${escapeHtml(s)}')">${escapeHtml(LABELS_M[s])}</button>`).join('')+
     `</div></div>`).join('');
 }
 function pickSh(s){mSel=s;document.querySelectorAll('#mOpts .mbtn').forEach(b=>b.classList.toggle('sel',b.dataset.s===s));}
@@ -3885,151 +4001,143 @@ function colL(n){let s='';while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m
 
 function exportExcel(){return withLockedView(exportExcelView);}
 // every read happens before the first await, i.e. inside the locked view
+// The Excel export, in parts (audit M1). X holds the palette and the two style helpers
+// every part uses; each sheet-writer returns the next free row where that matters.
+function xlKit(){
+  const P=XL_PAL[theme==='light'?'light':'dark'];
+  const solid=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
+  const thin={style:'thin',color:{argb:P.border}};
+  return {P,solid,allBorder:{top:thin,left:thin,bottom:thin,right:thin}};
+}
+// a title row merged across `cols` columns
+function xlTitle(ws,X,cols,text){
+  ws.mergeCells(1,1,1,cols);
+  const c=ws.getCell(1,1);c.value=text;
+  c.fill=X.solid(X.P.title);c.font={bold:true,size:13,color:{argb:X.P.titleFg}};
+  return c;
+}
+// a header row of labels on row `r`
+function xlHeader(ws,X,r,labels){
+  labels.forEach((h,c)=>{const cell=ws.getCell(r,c+1);cell.value=h;cell.fill=X.solid(X.P.header);
+    cell.font={bold:true,size:10,color:{argb:X.P.headerFg}};cell.alignment={horizontal:'center'};cell.border=X.allBorder;});
+}
+// one roster line — RN or support staff: name, group, 14 coloured shift cells, and
+// W1/W2/Total as live formulas so the counts follow edits made in Excel. W1/W2 count
+// scheduled ENTRIES (work + Hol/Vac/SL): Off and Req off are words, so both are subtracted.
+function xlRosterRow(ws,X,r,name,group,shifts){
+  const {P,solid,allBorder}=X;
+  const nameC=ws.getCell(r,1);nameC.value=name;nameC.fill=solid(P.grid);
+  nameC.font={color:{argb:P.gridFg},bold:true,size:11};nameC.border=allBorder;
+  const grpC=ws.getCell(r,2);grpC.value=group;grpC.fill=solid(P.grid);
+  if(group!==''){grpC.font={color:{argb:P.gridFg},size:10};grpC.alignment={horizontal:'center'};}
+  grpC.border=allBorder;
+  for(let d=0;d<14;d++){
+    const cell=ws.getCell(r,3+d),s=shifts[d];
+    cell.value=s==='OFF'?'Off':s;cell.alignment={horizontal:'center'};cell.border=allBorder;
+    const sc=P.S[s]||xlCustom(s);
+    if(sc){cell.fill=solid(sc[0]);cell.font={color:{argb:sc[1]},bold:true,size:10};}
+    else if(s==='OFF'){cell.fill=solid(P.grid);cell.font={color:{argb:P.offFg},size:10};}
+    else{cell.fill=solid(P.grid);cell.font={color:{argb:P.gridFg},size:10};}
+  }
+  const w1=`COUNTA(C${r}:I${r})-COUNTIF(C${r}:I${r},"REQ")-COUNTIF(C${r}:I${r},"Off")`;
+  const w2=`COUNTA(J${r}:P${r})-COUNTIF(J${r}:P${r},"REQ")-COUNTIF(J${r}:P${r},"Off")`;
+  [w1,w2,`Q${r}+R${r}`].forEach((f,k)=>{
+    const cell=ws.getCell(r,17+k);cell.value={formula:f};cell.alignment={horizontal:'center'};
+    cell.fill=solid(P.count);cell.font={bold:true,color:{argb:P.countFg}};cell.border=allBorder;
+  });
+}
+// rows after the RNs: day / night / total counts per day column, as live formulas
+function xlDayCounts(ws,X,dayR){
+  const {P,solid,allBorder}=X,ngtR=dayR+1,totR=dayR+2;
+  const label=(r,txt)=>{const c=ws.getCell(r,1);c.value=txt;ws.mergeCells(r,1,r,2);
+    c.fill=solid(P.count);c.font={italic:true,color:{argb:P.countFg},size:10};c.border=allBorder;};
+  label(dayR,'Day shifts');label(ngtR,'Night shifts');label(totR,'Total per day');
+  for(let d=0;d<14;d++){
+    const L=colL(3+d);
+    ws.getCell(dayR,3+d).value={formula:DAY_SHIFT_TYPES.map(t=>`COUNTIF(${L}3:${L}${2+N},"${t}")`).join('+')};
+    ws.getCell(ngtR,3+d).value={formula:`COUNTIF(${L}3:${L}${2+N},"N7")`};
+    ws.getCell(totR,3+d).value={formula:`${L}${dayR}+${L}${ngtR}`};
+    [dayR,ngtR,totR].forEach(r=>{const c=ws.getCell(r,3+d);c.alignment={horizontal:'center'};
+      c.fill=solid(P.count);c.font={color:{argb:P.countFg},size:10};c.border=allBorder;});
+  }
+  return totR;
+}
+// support-staff groups (Nurse Aids, Orderlies, Clerks), each under its own labelled
+// band below the RN block. Manual entries only.
+function xlStaffBands(ws,X,sr,days,NC){
+  const {P,solid,allBorder}=X;
+  ensureStaff();
+  for(const g of STAFF_GROUPS){
+    const gc=ws.getCell(sr,1);gc.value=staffGroupLabel(g.key);ws.mergeCells(sr,1,sr,2);
+    gc.fill=solid(P.header);gc.font={bold:true,size:10,color:{argb:P.headerFg}};
+    gc.alignment={horizontal:'left'};gc.border=allBorder;
+    for(let c=3;c<=NC;c++){const cell=ws.getCell(sr,c);cell.fill=solid(P.header);cell.border=allBorder;}
+    sr++;
+    for(const p of staffOf(g.key)){xlRosterRow(ws,X,sr,p.name,'',days.map(d=>staffShiftAt(p.id,d)));sr++;}
+  }
+  return sr;
+}
+// Sheet 1: the fortnight, RN totals checked against 7 by conditional formatting
+function xlScheduleSheet(wb,X,days,sh,weekStart){
+  const {P}=X,NC=19;                                       // A..S: RN, Group, 14 days, W1, W2, Total
+  const ws=wb.addWorksheet('Schedule',{views:[{state:'frozen',xSplit:2,ySplit:2}]});
+  xlTitle(ws,X,NC,`RN Rotating Schedule  ·  Cycle ${cycleOffset}  ·  ${fmt(weekStart)} – ${fmt(addDays(weekStart,13))}`)
+    .alignment={vertical:'middle',horizontal:'left'};
+  ws.getRow(1).height=22;
+  xlHeader(ws,X,2,['RN','Group',...days.map((d,i)=>`${DAYS[i%7]} ${fmt(d)}`),'W1','W2','Total']);
+  ws.getCell(2,1).alignment={horizontal:'left'};
+  normalizeOrder();
+  order.forEach((i,pos)=>xlRosterRow(ws,X,3+pos,names[i],groups[i],sh[i]));
+  const totR=xlDayCounts(ws,X,3+N);
+  xlStaffBands(ws,X,totR+2,days,NC);                     // one blank row after the counts
+  ws.getColumn(1).width=15;ws.getColumn(2).width=7;
+  for(let d=0;d<14;d++)ws.getColumn(3+d).width=8;
+  ws.getColumn(17).width=5;ws.getColumn(18).width=5;ws.getColumn(19).width=6;
+  // RULE: Total per nurse must equal 7 — auto-flags when you edit any shift
+  ws.addConditionalFormatting({ref:`S3:S${2+N}`,rules:[
+    {type:'cellIs',operator:'notEqual',formulae:['7'],priority:1,
+      style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
+    {type:'cellIs',operator:'equal',formulae:['7'],priority:2,
+      style:{font:{bold:true,color:{argb:P.ok}}}}
+  ]});
+}
+// Sheet 2: leave balances, with used counts pulled live from the Schedule sheet
+function xlBalancesSheet(wb,X){
+  const {P,solid,allBorder}=X;
+  const bs=wb.addWorksheet('Balances',{views:[{state:'frozen',ySplit:2}]});
+  xlTitle(bs,X,9,'Leave balances  (used counts pull live from the Schedule sheet)');bs.getRow(1).height=22;
+  xlHeader(bs,X,2,['RN','Group','Hol balance','Hol used','Hol remaining','Vac balance','Vac used','Vac remaining','SL used']);
+  order.forEach((i,pos)=>{
+    const r=3+pos;
+    const set=(col,val,opt)=>{const c=bs.getCell(r,col);c.value=val;c.border=allBorder;
+      c.fill=solid(P.grid);c.font=Object.assign({color:{argb:P.gridFg},size:10},opt||{});
+      c.alignment={horizontal:col<=2?(col===1?'left':'center'):'center'};return c;};
+    set(1,names[i],{bold:true});set(2,groups[i]);
+    set(3,holBal[i]);
+    set(4,{formula:`COUNTIF(Schedule!C${r}:P${r},"HOL")`});
+    set(5,{formula:`C${r}-D${r}`},{bold:true});
+    set(6,vacBal[i]);
+    set(7,{formula:`COUNTIF(Schedule!C${r}:P${r},"VAC")`});
+    set(8,{formula:`F${r}-G${r}`},{bold:true});
+    // sick leave has no entitlement to draw down — a running count, no "remaining"
+    set(9,{formula:`COUNTIF(Schedule!C${r}:P${r},"SL")`});
+  });
+  [3,4,5,6,7,8,9].forEach(c=>bs.getColumn(c).width=13);bs.getColumn(1).width=15;bs.getColumn(2).width=7;
+  // RULES: remaining < 0 red, low balance amber
+  const low=(ref,upTo)=>bs.addConditionalFormatting({ref,rules:[
+    {type:'cellIs',operator:'lessThan',formulae:['0'],priority:1,style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
+    {type:'cellIs',operator:'between',formulae:['0',upTo],priority:2,style:{fill:solidCF(P.warnBg),font:{color:{argb:P.warnFg}}}}
+  ]});
+  low(`E3:E${2+N}`,'2');low(`H3:H${2+N}`,'3');
+}
 async function exportExcelView(){
   if(!window.ExcelJS){exportCSVView();return;}
   try{
-    const {days,sh,weekStart}=sched;
-    const P=XL_PAL[theme==='light'?'light':'dark'];
-    const solid=argb=>({type:'pattern',pattern:'solid',fgColor:{argb}});
-    const thin={style:'thin',color:{argb:P.border}};
-    const allBorder={top:thin,left:thin,bottom:thin,right:thin};
+    const {days,sh,weekStart}=sched,X=xlKit();
     const wb=new ExcelJS.Workbook();
     wb.creator='RN Rotating Schedule';wb.created=new Date();
-
-    /* ===== Sheet 1: Schedule ===== */
-    const ws=wb.addWorksheet('Schedule',{views:[{state:'frozen',xSplit:2,ySplit:2}]});
-    const NC=19; // A..S (RN,Group,14 days,W1,W2,Total)
-    // row 1 title
-    ws.mergeCells(1,1,1,NC);
-    const tc=ws.getCell(1,1);
-    tc.value=`RN Rotating Schedule  ·  Cycle ${cycleOffset}  ·  ${fmt(weekStart)} – ${fmt(addDays(weekStart,13))}`;
-    tc.fill=solid(P.title);tc.font={bold:true,size:13,color:{argb:P.titleFg}};
-    tc.alignment={vertical:'middle',horizontal:'left'};
-    ws.getRow(1).height=22;
-    // row 2 header
-    const head=['RN','Group',...days.map((d,i)=>`${DAYS[i%7]} ${fmt(d)}`),'W1','W2','Total'];
-    head.forEach((h,c)=>{const cell=ws.getCell(2,c+1);cell.value=h;cell.fill=solid(P.header);
-      cell.font={bold:true,size:10,color:{argb:P.headerFg}};cell.alignment={horizontal:'center'};cell.border=allBorder;});
-    ws.getCell(2,1).alignment={horizontal:'left'};
-    // data rows 3..(2+N), in display order
-    normalizeOrder();
-    order.forEach((i,pos)=>{
-      const r=3+pos;
-      const nameC=ws.getCell(r,1);nameC.value=names[i];nameC.fill=solid(P.grid);
-      nameC.font={color:{argb:P.gridFg},bold:true,size:11};nameC.border=allBorder;
-      const grpC=ws.getCell(r,2);grpC.value=groups[i];grpC.fill=solid(P.grid);
-      grpC.font={color:{argb:P.gridFg},size:10};grpC.alignment={horizontal:'center'};grpC.border=allBorder;
-      for(let d=0;d<14;d++){
-        const cell=ws.getCell(r,3+d);const s=sh[i][d];
-        cell.value=s==='OFF'?'Off':s;cell.alignment={horizontal:'center'};cell.border=allBorder;
-        const sc=P.S[s]||xlCustom(s);
-        if(sc){cell.fill=solid(sc[0]);cell.font={color:{argb:sc[1]},bold:true,size:10};}
-        else if(s==='OFF'){cell.fill=solid(P.grid);cell.font={color:{argb:P.offFg},size:10};}
-        else{cell.fill=solid(P.grid);cell.font={color:{argb:P.gridFg},size:10};}
-      }
-      // W1 / W2 / Total — live formulas, so the counts follow your edits in Excel.
-      // W1/W2 count scheduled ENTRIES: work shifts + Holiday + Vacation + Sick leave.
-      // Off and Req off are written out as words, so both are subtracted back off.
-      const w1r=`COUNTA(C${r}:I${r})-COUNTIF(C${r}:I${r},"REQ")-COUNTIF(C${r}:I${r},"Off")`;
-      const w2r=`COUNTA(J${r}:P${r})-COUNTIF(J${r}:P${r},"REQ")-COUNTIF(J${r}:P${r},"Off")`;
-      [['Q',w1r],['R',w2r],['S',`Q${r}+R${r}`]].forEach(([col,f],k)=>{
-        const cell=ws.getCell(r,17+k);cell.value={formula:f};cell.alignment={horizontal:'center'};
-        cell.fill=solid(P.count);cell.font={bold:true,color:{argb:P.countFg}};cell.border=allBorder;
-      });
-    });
-    // count rows 22 (day),23 (night),24 (total) — live formulas per day column
-    const dayR=3+N,ngtR=dayR+1,totR=dayR+2;
-    const label=(r,txt)=>{const c=ws.getCell(r,1);c.value=txt;ws.mergeCells(r,1,r,2);
-      c.fill=solid(P.count);c.font={italic:true,color:{argb:P.countFg},size:10};c.border=allBorder;};
-    label(dayR,'Day shifts');label(ngtR,'Night shifts');label(totR,'Total per day');
-    for(let d=0;d<14;d++){
-      const L=colL(3+d);
-      const dayF=DAY_SHIFT_TYPES.map(t=>`COUNTIF(${L}3:${L}${2+N},"${t}")`).join('+');
-      ws.getCell(dayR,3+d).value={formula:dayF};
-      ws.getCell(ngtR,3+d).value={formula:`COUNTIF(${L}3:${L}${2+N},"N7")`};
-      ws.getCell(totR,3+d).value={formula:`${L}${dayR}+${L}${ngtR}`};
-      [dayR,ngtR,totR].forEach(r=>{const c=ws.getCell(r,3+d);c.alignment={horizontal:'center'};
-        c.fill=solid(P.count);c.font={color:{argb:P.countFg},size:10};c.border=allBorder;});
-    }
-    // ===== support-staff groups (Nurse Aids, Orderlies, Clerks) =====
-    // appended below the RN block, each group under its own labelled band, with
-    // live W1/W2/Total formulas like the RN rows. Manual entries only.
-    ensureStaff();
-    let sr=totR+2;   // one blank row after the per-day count rows
-    for(const g of STAFF_GROUPS){
-      const gc=ws.getCell(sr,1);gc.value=staffGroupLabel(g.key);ws.mergeCells(sr,1,sr,2);
-      gc.fill=solid(P.header);gc.font={bold:true,size:10,color:{argb:P.headerFg}};
-      gc.alignment={horizontal:'left'};gc.border=allBorder;
-      for(let c=3;c<=NC;c++){const cell=ws.getCell(sr,c);cell.fill=solid(P.header);cell.border=allBorder;}
-      sr++;
-      for(const p of staffOf(g.key)){
-        const nameC=ws.getCell(sr,1);nameC.value=p.name;nameC.fill=solid(P.grid);
-        nameC.font={color:{argb:P.gridFg},bold:true,size:11};nameC.border=allBorder;
-        const grpC=ws.getCell(sr,2);grpC.value='';grpC.fill=solid(P.grid);grpC.border=allBorder;
-        for(let d=0;d<14;d++){
-          const s=staffShiftAt(p.id,days[d]);
-          const cell=ws.getCell(sr,3+d);
-          cell.value=s==='OFF'?'Off':s;cell.alignment={horizontal:'center'};cell.border=allBorder;
-          const sc=P.S[s]||xlCustom(s);
-          if(sc){cell.fill=solid(sc[0]);cell.font={color:{argb:sc[1]},bold:true,size:10};}
-          else if(s==='OFF'){cell.fill=solid(P.grid);cell.font={color:{argb:P.offFg},size:10};}
-          else{cell.fill=solid(P.grid);cell.font={color:{argb:P.gridFg},size:10};}
-        }
-        const w1r=`COUNTA(C${sr}:I${sr})-COUNTIF(C${sr}:I${sr},"REQ")-COUNTIF(C${sr}:I${sr},"Off")`;
-        const w2r=`COUNTA(J${sr}:P${sr})-COUNTIF(J${sr}:P${sr},"REQ")-COUNTIF(J${sr}:P${sr},"Off")`;
-        [['Q',w1r],['R',w2r],['S',`Q${sr}+R${sr}`]].forEach(([col,f],k)=>{
-          const cell=ws.getCell(sr,17+k);cell.value={formula:f};cell.alignment={horizontal:'center'};
-          cell.fill=solid(P.count);cell.font={bold:true,color:{argb:P.countFg}};cell.border=allBorder;
-        });
-        sr++;
-      }
-    }
-    // column widths
-    ws.getColumn(1).width=15;ws.getColumn(2).width=7;
-    for(let d=0;d<14;d++)ws.getColumn(3+d).width=8;
-    ws.getColumn(17).width=5;ws.getColumn(18).width=5;ws.getColumn(19).width=6;
-    // RULE: Total per nurse must equal 7 — auto-flags when you edit any shift
-    ws.addConditionalFormatting({ref:`S3:S${2+N}`,rules:[
-      {type:'cellIs',operator:'notEqual',formulae:['7'],priority:1,
-        style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
-      {type:'cellIs',operator:'equal',formulae:['7'],priority:2,
-        style:{font:{bold:true,color:{argb:P.ok}}}}
-    ]});
-
-    /* ===== Sheet 2: Balances (live, references Schedule) ===== */
-    const bs=wb.addWorksheet('Balances',{views:[{state:'frozen',ySplit:2}]});
-    bs.mergeCells(1,1,1,9);
-    const bt=bs.getCell(1,1);bt.value='Leave balances  (used counts pull live from the Schedule sheet)';
-    bt.fill=solid(P.title);bt.font={bold:true,size:13,color:{argb:P.titleFg}};bs.getRow(1).height=22;
-    const bh=['RN','Group','Hol balance','Hol used','Hol remaining','Vac balance','Vac used','Vac remaining','SL used'];
-    bh.forEach((h,c)=>{const cell=bs.getCell(2,c+1);cell.value=h;cell.fill=solid(P.header);
-      cell.font={bold:true,size:10,color:{argb:P.headerFg}};cell.alignment={horizontal:'center'};cell.border=allBorder;});
-    order.forEach((i,pos)=>{
-      const r=3+pos;
-      const set=(col,val,opt)=>{const c=bs.getCell(r,col);c.value=val;c.border=allBorder;
-        c.fill=solid(P.grid);c.font=Object.assign({color:{argb:P.gridFg},size:10},opt||{});
-        c.alignment={horizontal:col<=2?(col===1?'left':'center'):'center'};return c;};
-      set(1,names[i],{bold:true});set(2,groups[i]);
-      set(3,holBal[i]);
-      set(4,{formula:`COUNTIF(Schedule!C${r}:P${r},"HOL")`});
-      set(5,{formula:`C${r}-D${r}`},{bold:true});
-      set(6,vacBal[i]);
-      set(7,{formula:`COUNTIF(Schedule!C${r}:P${r},"VAC")`});
-      set(8,{formula:`F${r}-G${r}`},{bold:true});
-      // sick leave has no entitlement to draw down — a running count, no "remaining"
-      set(9,{formula:`COUNTIF(Schedule!C${r}:P${r},"SL")`});
-    });
-    [3,4,5,6,7,8,9].forEach(c=>bs.getColumn(c).width=13);bs.getColumn(1).width=15;bs.getColumn(2).width=7;
-    // RULES: remaining < 0 red, low balance amber
-    bs.addConditionalFormatting({ref:`E3:E${2+N}`,rules:[
-      {type:'cellIs',operator:'lessThan',formulae:['0'],priority:1,style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
-      {type:'cellIs',operator:'between',formulae:['0','2'],priority:2,style:{fill:solidCF(P.warnBg),font:{color:{argb:P.warnFg}}}}
-    ]});
-    bs.addConditionalFormatting({ref:`H3:H${2+N}`,rules:[
-      {type:'cellIs',operator:'lessThan',formulae:['0'],priority:1,style:{fill:solidCF(P.badBg),font:{bold:true,color:{argb:P.badFg}}}},
-      {type:'cellIs',operator:'between',formulae:['0','3'],priority:2,style:{fill:solidCF(P.warnBg),font:{color:{argb:P.warnFg}}}}
-    ]});
-
+    xlScheduleSheet(wb,X,days,sh,weekStart);
+    xlBalancesSheet(wb,X);
     const buf=await wb.xlsx.writeBuffer();
     downloadBlob(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),`RN_schedule_${periodLabel()}.xlsx`);
     toast('Excel file downloaded (colored + live formulas)');
@@ -4132,101 +4240,104 @@ const PDF_COL={
 const PDF_T={title:15,sub:9,section:11,ink:[23,27,34],subInk:[90,100,114],offInk:[90,100,114],
   line:[205,210,218],headBg:[240,242,246],headInk:[64,74,90],footBg:[233,236,241],zebra:[248,249,251]};
 function exportPDF(){return withLockedView(exportPDFView);}
+// The roster PDF, in parts (audit M1).
+// The rows of the schedule table: RNs, the three per-day count rows, then each
+// support-staff group under its own heading row. The index sets say which row is which,
+// for the colouring in pdfScheduleCell.
+function pdfScheduleRows(days,sh){
+  const head=[['RN','Grp',...days.map((d,i)=>`${DAYS[i%7]} ${fmt(d)}`),'W1','W2','Tot']];
+  const body=[];
+  normalizeOrder();
+  for(const i of order){
+    const w1=sh[i].slice(0,7).filter(s=>ENTRY_TYPES.has(s)).length;
+    const w2=sh[i].slice(7,14).filter(s=>ENTRY_TYPES.has(s)).length;
+    body.push([names[i],groups[i],...sh[i].map(s=>s==='OFF'?'Off':s),w1,w2,w1+w2]);
+  }
+  const dayRow=['Day shifts',''],ngtRow=['Night shifts',''],totRow=['Total/day',''];
+  for(let d=0;d<14;d++){
+    dayRow.push(Array.from({length:N},(_,i)=>i).filter(i=>DAY_SHIFT_TYPES.includes(sh[i][d])).length);
+    ngtRow.push(dayTypeCount(sh,d,'N7'));
+    totRow.push(Array.from({length:N},(_,i)=>i).filter(i=>WORK_TYPES.has(sh[i][d])).length);
+  }
+  dayRow.push('','','');ngtRow.push('','','');totRow.push('','','');
+  body.push(dayRow,ngtRow,totRow);
+  ensureStaff();
+  const staffRows=new Set(),groupRows=new Set();
+  for(const g of STAFF_GROUPS){
+    groupRows.add(body.length);
+    body.push([staffGroupLabel(g.key),...Array(16).fill('')]);
+    for(const p of staffOf(g.key)){
+      let w1=0,w2=0;const cells=[];
+      for(let d=0;d<14;d++){const s=staffShiftAt(p.id,days[d]);
+        if(ENTRY_TYPES.has(s))(d<7?w1++:w2++);cells.push(s==='OFF'?'Off':s);}
+      staffRows.add(body.length);
+      body.push([p.name,'',...cells,w1,w2,w1+w2]);
+    }
+  }
+  return {head,body,firstCountRow:N,staffRows,groupRows};
+}
+// autoTable didParseCell: shift colours, the count rows, the staff headings
+function pdfScheduleCell(t,data){
+  const r=data.row.index,c=data.column.index,st=data.cell.styles;
+  if(data.section!=='body')return;
+  if(t.groupRows.has(r)){                                   // staff group heading
+    st.fillColor=[226,230,237];st.textColor=[45,54,68];st.fontStyle='bold';if(c===0)st.halign='left';return;
+  }
+  const isStaff=t.staffRows.has(r);
+  if(r>=t.firstCountRow&&!isStaff){                        // the three per-day count rows
+    st.fillColor=[238,240,244];st.textColor=[75,83,95];st.fontStyle='bold';if(c===0)st.halign='left';
+  }
+  else if(c>=2&&c<=15){
+    // Off carries no fill — it is the absence of a duty, not one of them
+    if(data.cell.raw==='Off'){st.textColor=PDF_T.offInk;}
+    else{const col=PDF_COL[data.cell.raw]||pdfCustom(data.cell.raw);
+      if(col){st.fillColor=col[0];st.textColor=col[1];st.fontStyle='bold';}}}
+  else if(c>=16){st.fillColor=[238,240,244];st.fontStyle='bold';}
+  if(isStaff&&c===0)st.halign='left';
+}
+function pdfBalances(doc){
+  const y=doc.lastAutoTable.finalY+18;
+  doc.setFont('helvetica','bold');doc.setFontSize(PDF_T.section);doc.setTextColor(...PDF_T.ink);
+  doc.text('Leave balances',24,y);
+  const body=[];
+  for(const i of order){const hu=countForRn(i,'HOL'),vu=countForRn(i,'VAC'),su=countForRn(i,'SL');
+    body.push([names[i],groups[i],holBal[i],hu,holBal[i]-hu,vacBal[i],vu,vacBal[i]-vu,su]);}
+  doc.autoTable({head:[['RN','Grp','Hol bal','Hol used','Hol rem','Vac bal','Vac used','Vac rem','SL used']],body,startY:y+8,margin:{left:20,right:20},
+    styles:{fontSize:8,halign:'center',cellPadding:3,lineColor:PDF_T.line,lineWidth:0.4,textColor:PDF_T.ink},
+    headStyles:{fillColor:PDF_T.headBg,textColor:PDF_T.headInk,fontStyle:'bold'},
+    alternateRowStyles:{fillColor:PDF_T.zebra},
+    columnStyles:{0:{halign:'left',cellWidth:96,fontStyle:'bold'}}});
+}
+// without the PDF library (or if it fails), fall back to the browser's own print
+function pdfPrintFallback(msg){
+  const prev=document.title;document.title=`RN Schedule ${periodLabel()}`;window.print();
+  setTimeout(()=>{document.title=prev;},500);
+  toast(msg);
+}
 function exportPDFView(){
   const J=window.jspdf&&window.jspdf.jsPDF;
   const{days,sh,weekStart}=sched;
-  if(!J){ // library unavailable (offline) -> browser print (may show URL footer)
-    const prev=document.title;document.title=`RN Schedule ${periodLabel()}`;window.print();
-    setTimeout(()=>{document.title=prev;},500);
-    toast('PDF library offline — used browser print');return;
-  }
+  if(!J){pdfPrintFallback('PDF library offline — used browser print');return;}   // (may show a URL footer)
   try{
     const doc=new J({orientation:'landscape',unit:'pt',format:'a4'});
     doc.setFont('helvetica','bold');doc.setFontSize(PDF_T.title);doc.setTextColor(...PDF_T.ink);
     doc.text('RN Rotating Schedule',24,26);
     doc.setFont('helvetica','normal');doc.setFontSize(PDF_T.sub);doc.setTextColor(...PDF_T.subInk);
     doc.text(`Cycle ${cycleOffset}  ·  ${fmt(weekStart)} – ${fmt(addDays(weekStart,13))} ${addDays(weekStart,13).getFullYear()}  ·  generated ${fmt(new Date())} ${new Date().getFullYear()}`,24,40);
-
-    // ----- schedule table -----
-    const head=[['RN','Grp',...days.map((d,i)=>`${DAYS[i%7]} ${fmt(d)}`),'W1','W2','Tot']];
-    const body=[];
-    normalizeOrder();
-    for(const i of order){
-      const w1=sh[i].slice(0,7).filter(s=>ENTRY_TYPES.has(s)).length;
-      const w2=sh[i].slice(7,14).filter(s=>ENTRY_TYPES.has(s)).length;
-      body.push([names[i],groups[i],...sh[i].map(s=>s==='OFF'?'Off':s),w1,w2,w1+w2]);
-    }
-    const dayRow=['Day shifts',''],ngtRow=['Night shifts',''],totRow=['Total/day',''];
-    for(let d=0;d<14;d++){
-      dayRow.push(Array.from({length:N},(_,i)=>i).filter(i=>DAY_SHIFT_TYPES.includes(sh[i][d])).length);
-      ngtRow.push(dayTypeCount(sh,d,'N7'));
-      totRow.push(Array.from({length:N},(_,i)=>i).filter(i=>WORK_TYPES.has(sh[i][d])).length);
-    }
-    dayRow.push('','','');ngtRow.push('','','');totRow.push('','','');
-    body.push(dayRow,ngtRow,totRow);
-    const firstCountRow=N;
-    // support-staff groups appended as their own labelled sections
-    ensureStaff();
-    const staffRowIdx=new Set(),groupRowIdx=new Set();
-    for(const g of STAFF_GROUPS){
-      groupRowIdx.add(body.length);
-      body.push([staffGroupLabel(g.key),...Array(16).fill('')]);
-      for(const p of staffOf(g.key)){
-        let w1=0,w2=0;const cells=[];
-        for(let d=0;d<14;d++){const s=staffShiftAt(p.id,days[d]);
-          if(ENTRY_TYPES.has(s))(d<7?w1++:w2++);cells.push(s==='OFF'?'Off':s);}
-        staffRowIdx.add(body.length);
-        body.push([p.name,'',...cells,w1,w2,w1+w2]);
-      }
-    }
+    const t=pdfScheduleRows(days,sh);
     doc.autoTable({
-      head,body,startY:50,margin:{left:20,right:20},
+      head:t.head,body:t.body,startY:50,margin:{left:20,right:20},
       styles:{fontSize:8,halign:'center',valign:'middle',cellPadding:3,lineColor:PDF_T.line,lineWidth:0.4,textColor:PDF_T.ink},
       headStyles:{fillColor:PDF_T.headBg,textColor:PDF_T.headInk,fontStyle:'bold',fontSize:7.5},
       columnStyles:{0:{halign:'left',cellWidth:72,fontStyle:'bold'},1:{cellWidth:22}},
-      didParseCell:(data)=>{
-        const r=data.row.index,c=data.column.index;
-        if(data.section!=='body')return;
-        if(groupRowIdx.has(r)){                       // staff group heading
-          data.cell.styles.fillColor=[226,230,237];data.cell.styles.textColor=[45,54,68];
-          data.cell.styles.fontStyle='bold';if(c===0)data.cell.styles.halign='left';return;
-        }
-        const isStaff=staffRowIdx.has(r);
-        if(r>=firstCountRow&&!isStaff){               // the three per-day count rows
-          data.cell.styles.fillColor=[238,240,244];data.cell.styles.textColor=[75,83,95];
-          data.cell.styles.fontStyle='bold';if(c===0)data.cell.styles.halign='left';
-        }
-        else if(c>=2&&c<=15){
-          // Off carries no fill — it is the absence of a duty, not one of them
-          if(data.cell.raw==='Off'){data.cell.styles.textColor=PDF_T.offInk;}
-          else{const col=PDF_COL[data.cell.raw]||pdfCustom(data.cell.raw);
-            if(col){data.cell.styles.fillColor=col[0];data.cell.styles.textColor=col[1];data.cell.styles.fontStyle='bold';}}}
-        else if(c>=16){data.cell.styles.fillColor=[238,240,244];data.cell.styles.fontStyle='bold';}
-        if(isStaff&&c===0)data.cell.styles.halign='left';
-      }
+      didParseCell:data=>pdfScheduleCell(t,data)
     });
-
-    // ----- balances table -----
-    let y=doc.lastAutoTable.finalY+18;
-    doc.setFont('helvetica','bold');doc.setFontSize(PDF_T.section);doc.setTextColor(...PDF_T.ink);
-    doc.text('Leave balances',24,y);
-    const thead=[['RN','Grp','Hol bal','Hol used','Hol rem','Vac bal','Vac used','Vac rem','SL used']];
-    const tbody=[];
-    for(const i of order){const hu=countForRn(i,'HOL'),vu=countForRn(i,'VAC'),su=countForRn(i,'SL');
-      tbody.push([names[i],groups[i],holBal[i],hu,holBal[i]-hu,vacBal[i],vu,vacBal[i]-vu,su]);}
-    doc.autoTable({head:thead,body:tbody,startY:y+8,margin:{left:20,right:20},
-      styles:{fontSize:8,halign:'center',cellPadding:3,lineColor:PDF_T.line,lineWidth:0.4,textColor:PDF_T.ink},
-      headStyles:{fillColor:PDF_T.headBg,textColor:PDF_T.headInk,fontStyle:'bold'},
-      alternateRowStyles:{fillColor:PDF_T.zebra},
-      columnStyles:{0:{halign:'left',cellWidth:96,fontStyle:'bold'}}});
-
+    pdfBalances(doc);
     doc.save(`RN_schedule_${periodLabel()}.pdf`);
     toast('PDF downloaded');
   }catch(err){
     console.error('PDF export failed',err);
-    const prev=document.title;document.title=`RN Schedule ${periodLabel()}`;window.print();
-    setTimeout(()=>{document.title=prev;},500);
-    toast('PDF export failed — used browser print');
+    pdfPrintFallback('PDF export failed — used browser print');
   }
 }
 
