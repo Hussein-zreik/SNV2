@@ -4,10 +4,12 @@
  *   npm run test:cloud
  *
  * Part 1 feeds firestore.rules through the Firestore + Auth emulators as four
- * different callers (staff with only the link, an anonymous roster device, the
- * manager, and a second manager account) and asserts who may do what.
- * Part 2 drives the two real pages end to end: the manager creates a link in
- * index.html, a member of staff sends a request from request.html on a phone-sized
+ * different callers (staff with only the link, an anonymous sign-in, the manager,
+ * and a second manager account) and asserts who may do what.
+ * Part 2 drives the real pages end to end: the manager signs in on the lock screen,
+ * the roster moves from the old unit-code location into the account and syncs
+ * between two devices (also after edits made offline); then the manager creates a
+ * staff link, a member of staff sends a request from request.html on a phone-sized
  * screen, and it appears in the manager's Staff requests window.
  *
  * Nothing here touches the real Firebase project: the pages load the same compat
@@ -72,7 +74,6 @@ const browser = await launch();
 const pageErrors = [];
 async function newContext(opts = {}) {
   const ctx = await browser.newContext(opts);
-  await ctx.addInitScript(() => { try { sessionStorage.setItem('rn_unlocked', '1'); } catch { /* no storage */ } });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, route => {
     const url = route.request().url();
     if (url.startsWith(SDK)) {
@@ -88,9 +89,23 @@ async function newContext(opts = {}) {
 const watch = (page, label) => page.on('pageerror', e => pageErrors.push(`${label}: ${e}`));
 const until = (page, fn, arg, timeout = 15000) => page.waitForFunction(fn, arg, { timeout }).then(() => true, () => false);
 
+/* ---------- emulator admin access (bypasses the rules): seeding and inspection only ---------- */
+const ADMIN = `http://${FS_HOST}/v1/projects/demo-snv2/databases/(default)/documents/`;
+const enc = v => v === null ? { nullValue: null }
+  : typeof v === 'boolean' ? { booleanValue: v }
+  : typeof v === 'number' ? (Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v })
+  : typeof v === 'string' ? { stringValue: v }
+  : Array.isArray(v) ? { arrayValue: { values: v.map(enc) } }
+  : { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, enc(x)])) } };
+const adminSet = (doc, data) => fetch(ADMIN + doc, { method: 'PATCH', headers: { Authorization: 'Bearer owner', 'content-type': 'application/json' },
+  body: JSON.stringify({ fields: enc(data).mapValue.fields }) }).then(r => r.status);
+const adminHas = doc => fetch(ADMIN + doc, { headers: { Authorization: 'Bearer owner' } }).then(r => r.status === 200);
+const locked = page => page.evaluate(() => !document.getElementById('lockScreen').classList.contains('unlocked'));
+
 /* =====================================================================
    Part 1 — the rules, caller by caller
    ===================================================================== */
+await adminSet('schedules/rules-old-unit', { state: { names: ['RN One'] }, updatedAt: 1 });
 const rulesCtx = await newContext();
 const rp = await rulesCtx.newPage();
 watch(rp, 'rules page');
@@ -135,7 +150,7 @@ const rules = await rp.evaluate(async () => {
 
   // --- sending a request
   await allow('staff can send a valid request', reqs('staff').add(req()));
-  await allow('an anonymous roster device can send one too', reqs('anon').add(req({ rnId: 'u2', name: 'RN Two' })));
+  await allow('an anonymous sign-in can send one too', reqs('anon').add(req({ rnId: 'u2', name: 'RN Two' })));
   await deny('request for someone not on the list', reqs('staff').add(req({ rnId: 'u9' })));
   await deny('request without a reason field', (() => { const r = req(); delete r.reason; return reqs('staff').add(r); })());
   await deny('request with an empty reason', reqs('staff').add(req({ reason: '' })));
@@ -179,9 +194,31 @@ const rules = await rp.evaluate(async () => {
   await allow('manager shrinks the name list', forms('mgr').doc(FORM).set(form({ ids: ['u2'], names: ['RN Two'] })));
   await deny('someone taken off the list can no longer be requested for', reqs('staff').add(req()));
 
+  // --- the roster: one document per manager account
+  const roster = (n, uid) => db(n).collection('rosters').doc(uid);
+  await allow('manager saves their roster', roster('mgr', mgrUid).set({ state: { names: ['RN One'] }, updatedAt: 1 }));
+  await allow('manager reads their roster', roster('mgr', mgrUid).get());
+  await deny('roster with an unexpected field is refused', roster('mgr', mgrUid).set({ state: {}, updatedAt: 1, extra: 1 }));
+  await deny('roster whose state is not an object is refused', roster('mgr', mgrUid).set({ state: 'x', updatedAt: 1 }));
+  await deny('another manager cannot read this roster', roster('other', mgrUid).get());
+  await deny('another manager cannot overwrite this roster', roster('other', mgrUid).set({ state: {}, updatedAt: 2 }));
+  await deny('another manager cannot delete this roster', roster('other', mgrUid).delete());
+  await deny('an anonymous sign-in cannot read a roster', roster('anon', mgrUid).get());
+  await deny('an anonymous sign-in cannot create a roster under its own id', roster('anon', A.anon.auth().currentUser.uid).set({ state: {}, updatedAt: 1 }));
+  await deny('a visitor who is not signed in cannot read a roster', roster('staff', mgrUid).get());
+  await deny('nobody can list rosters', db('mgr').collection('rosters').get());
+
+  // --- legacy: the roster once shared by unit code
+  const legacy = n => db(n).collection('schedules').doc('rules-old-unit');
+  await deny('old shared copy is closed to a visitor who is not signed in', legacy('staff').get());
+  await deny('old shared copy is closed to an anonymous sign-in (it used to be open)', legacy('anon').get());
+  await deny('nothing can be written to the old location any more', legacy('mgr').set({ state: {}, updatedAt: 2 }));
+  await deny('a new unit-code document cannot be created', db('mgr').collection('schedules').doc('brand-new').set({ state: {}, updatedAt: 2 }));
+  await deny('the old location cannot be listed', db('mgr').collection('schedules').get());
+  await allow('a manager can read the old shared copy (to move it)', legacy('mgr').get());
+  await allow('a manager can delete the old shared copy', legacy('mgr').delete());
+
   // --- the rest of the database
-  await deny('roster document is closed to a visitor who is not signed in', db('staff').collection('schedules').doc('some-unit').get());
-  await allow('roster document still opens for a signed-in device', db('anon').collection('schedules').doc('some-unit').get());
   await deny('any other collection is closed', db('mgr').collection('anything').doc('x').set({ a: 1 }));
   return out;
 });
@@ -192,8 +229,10 @@ await rulesCtx.close();
 /* =====================================================================
    Part 2 — the two pages, end to end
    ===================================================================== */
-console.log('--- manager creates the link ---');
+console.log('--- lock screen: the account sign-in ---');
 const mctx = await newContext({ timezoneId: 'Asia/Beirut' });
+// this device used the unit-code sync before: it still remembers the code
+await mctx.addInitScript(() => { try { if (!localStorage.getItem('__t')) { localStorage.setItem('__t', '1'); localStorage.setItem('rn_unit', 'old-ward'); } } catch { /* no storage */ } });
 // the ward's manager account (in production: created by hand in the Firebase console)
 const setup = await mctx.newPage();
 await setup.goto(BASE + '/__sdk.html');
@@ -208,29 +247,121 @@ const mgr = await mctx.newPage();
 watch(mgr, 'manager app');
 mgr.on('dialog', d => d.accept());
 await mgr.goto(BASE + '/index.html');
-check('app signs in anonymously by default', await until(mgr, () => cloudAuth === 'ok' && firebase.auth().currentUser && firebase.auth().currentUser.isAnonymous));
-await mgr.evaluate(() => connectCloud('cloud-test-unit'));
-check('roster cloud sync connects', await until(mgr, () => cloudStatus === 'synced'));
-const before = await mgr.evaluate(() => ({ state: JSON.stringify(cloudStateObj()), hist: history.length, people: sreqPeople().length, rn0: names[order[0]] }));
+check('the app opens locked and nobody is signed in — not even anonymously',
+  await until(mgr, () => cloudAuth === 'off' && firebase.auth().currentUser === null) && await locked(mgr));
+check('the shared password is gone from the page', await mgr.evaluate(() => typeof hashPw === 'undefined' && typeof PW_HASH === 'undefined' &&
+  !document.documentElement.innerHTML.includes('PW_HASH')));
+// the roster as the ward last shared it under the unit code
+const legacyState = await mgr.evaluate(() => { const s = JSON.parse(JSON.stringify(cloudStateObj())); s.names[0] = 'Legacy Nurse'; return s; });
+await adminSet('schedules/old-ward', { state: legacyState, updatedAt: 1794398400000 });
+check('a signed-out page cannot read the old shared copy', await mgr.evaluate(() =>
+  firebase.firestore().collection('schedules').doc('old-ward').get().then(() => 'ok', e => e.code)) === 'permission-denied');
 
+await mgr.click('#lockGo');
+check('empty sign-in is stopped', /email and password/i.test(await mgr.textContent('#lockErr')) && await locked(mgr));
+await mgr.fill('#lockEmail', 'ward@example.test');
+await mgr.fill('#pw1', 'wrong-password');
+await mgr.click('#lockGo');
+check('wrong password is refused with a plain message and the app stays locked',
+  await until(mgr, () => /not correct/.test(document.getElementById('lockErr').textContent)) && await locked(mgr));
+await mgr.fill('#pw1', 'ward-pass-1');
+await mgr.press('#pw1', 'Enter');
+check('the right password opens the app', await until(mgr, () => document.getElementById('lockScreen').classList.contains('unlocked') && !!mgrUser && cloudAuth === 'ok'));
+check('without "keep me signed in" nothing is left for the next browser session',
+  await mgr.evaluate(() => sessionStorage.getItem('rn_signed') === '1' && localStorage.getItem('rn_signed') === null));
+
+console.log('--- the roster moves into the account ---');
+check('roster sync connects to the account', await until(mgr, () => cloudStatus === 'synced'));
+const moved = await mgr.evaluate(async () => {
+  const d = await firebase.firestore().collection('rosters').doc(mgrUser.uid).get();
+  return { local: names[0], cloud: d.exists && d.data().state.names[0], uid: mgrUser.uid, undo: history.some(h => /moving the shared roster/.test(h.label)) };
+});
+check('the old shared roster was taken over, on the device and in the account', moved.local === 'Legacy Nurse' && moved.cloud === 'Legacy Nurse', JSON.stringify(moved));
+check('what was on the device before is kept as an undo step', moved.undo === true);
+check('the rules check reports the database as closed', await until(mgr, () => cloudSecure === true));
+await mgr.click('#cloudBtn');
+check('Cloud window warns that the old shared copy still exists',
+  await until(mgr, () => /still stored under “old-ward”/.test(document.getElementById('legacyMsg').textContent) && document.getElementById('legacyActions').style.display === 'flex'));
+check('Cloud window says where the roster is saved and that the rules check passed',
+  (await mgr.textContent('#cloudStatusMsg')).includes('ward@example.test') && /Rules check passed/.test(await mgr.textContent('#cloudSecureMsg')));
+await mgr.click('#legacyActions .btn.danger');
+check('"Delete old copy" removes it from the database', await until(mgr, () => /deleted/i.test(document.getElementById('legacyMsg').textContent)) &&
+  !(await adminHas('schedules/old-ward')) && await mgr.evaluate(() => localStorage.getItem('rn_unit') === null));
+check('the roster in the account is untouched by that', await adminHas('rosters/' + moved.uid));
+await mgr.evaluate(() => closeCloud());
+
+console.log('--- a second device, and edits made offline ---');
+const dctx = await newContext({ timezoneId: 'Asia/Beirut' });
+const dev2 = await dctx.newPage();
+watch(dev2, 'second device');
+dev2.on('dialog', d => d.accept());
+await dev2.goto(BASE + '/index.html');
+await until(dev2, () => cloudAuth === 'off');
+await dev2.fill('#lockEmail', 'ward@example.test');
+await dev2.fill('#pw1', 'ward-pass-1');
+await dev2.check('#lockKeep');
+await dev2.click('#lockGo');
+check('second device signs in and receives the account\'s roster',
+  await until(dev2, () => cloudStatus === 'synced' && names[0] === 'Legacy Nurse'));
+check('its own earlier roster is kept as an undo step', await dev2.evaluate(() => history.some(h => /loading the roster from your account/.test(h.label))));
+check('"keep me signed in" is remembered on that device', await dev2.evaluate(() => localStorage.getItem('rn_signed') === '1'));
+await mgr.evaluate(() => { const b = snapshot(); names[1] = 'Edited On One'; pushHistory('rename', b); render(); saveState(); });
+check('an edit on one device reaches the other', await until(dev2, () => names[1] === 'Edited On One'));
+await dev2.close();
+// the same device with no internet: Firebase cannot load at all
+const off = await dctx.newPage();
+watch(off, 'second device, offline');
+await off.route(u => u.href.startsWith(SDK), r => r.abort());
+await off.goto(BASE + '/index.html');
+check('a device that stays signed in opens with no internet', !(await locked(off)) && await until(off, () => cloudStatus === 'unavailable') && !(await locked(off)));
+check('offline, it shows the roster it last synced', await off.evaluate(() => names[0] === 'Legacy Nurse' && names[1] === 'Edited On One'));
+await off.evaluate(() => { const b = snapshot(); names[2] = 'Edited Offline'; pushHistory('rename', b); render(); saveState(); });
+await off.close();
+const back = await dctx.newPage();
+watch(back, 'second device, back online');
+back.on('dialog', d => d.accept());
+await back.goto(BASE + '/index.html');
+check('back online, the offline edit is sent up instead of being overwritten',
+  await until(back, () => cloudStatus === 'synced' && names[2] === 'Edited Offline') && await until(mgr, () => names[2] === 'Edited Offline'));
+check('the app opened without asking for the password again', !(await locked(back)) && await back.evaluate(() => !!mgrUser));
+await back.evaluate(() => lockApp());
+check('the padlock signs out and locks, and forgets the device',
+  await until(back, () => !mgrUser && cloudUid === '' && firebase.auth().currentUser === null) && await locked(back) &&
+  await back.evaluate(() => localStorage.getItem('rn_signed') === null && sessionStorage.getItem('rn_signed') === null));
+await back.reload();
+check('after signing out, a reload stays locked', await until(back, () => cloudAuth === 'off') && await locked(back));
+await dctx.close();
+// a device that only claims to be signed in (the marker without a session)
+const fctx = await newContext();
+await fctx.addInitScript(() => { try { localStorage.setItem('rn_signed', '1'); } catch { /* no storage */ } });
+const fake = await fctx.newPage();
+watch(fake, 'forged marker');
+await fake.goto(BASE + '/index.html');
+check('a forged "signed in" marker gets no session: the app locks and the cloud stays closed',
+  await until(fake, () => cloudAuth === 'off' && !document.getElementById('lockScreen').classList.contains('unlocked')) &&
+  await fake.evaluate(uid => firebase.firestore().collection('rosters').doc(uid).get().then(() => 'ok', e => e.code), moved.uid) === 'permission-denied');
+await fctx.close();
+const nctx = await newContext();
+const cold = await nctx.newPage();
+watch(cold, 'new device, offline');
+await cold.route(u => u.href.startsWith(SDK), r => r.abort());
+await cold.goto(BASE + '/index.html');
+check('a device that never signed in stays locked without internet, and says why',
+  await until(cold, () => /No internet connection/.test(document.getElementById('lockErr').textContent)) && await locked(cold));
+await nctx.close();
+
+console.log('--- manager creates the staff link ---');
+const before = await mgr.evaluate(() => ({ state: JSON.stringify(cloudStateObj()), hist: history.length, people: sreqPeople().length, rn0: names[order[0]] }));
 await mgr.click('#sreqBtn');
-check('window asks the manager to sign in', await mgr.isVisible('#sreqSignin') && !(await mgr.isVisible('#sreqMain')));
-await mgr.fill('#sreqEmail', 'ward@example.test');
-await mgr.fill('#sreqPw', 'wrong-password');
-await mgr.click('#sreqSigninBtn');
-check('wrong password is refused with a plain message',
-  await until(mgr, () => /not correct/.test(document.getElementById('sreqSigninMsg').textContent)) && await mgr.isVisible('#sreqSignin'));
-await mgr.fill('#sreqPw', 'ward-pass-1');
-await mgr.click('#sreqSigninBtn');
-check('manager signs in', await until(mgr, () => !!mgrUser && sreqState === 'ready' && !document.getElementById('sreqSetup').hidden));
+check('Staff requests opens for the signed-in manager, with no second sign-in',
+  await until(mgr, () => sreqState === 'ready' && !document.getElementById('sreqSetup').hidden) && !(await mgr.isVisible('#sreqOff')));
 check('window shows who is signed in', (await mgr.textContent('#sreqWho')).includes('ward@example.test'));
 await mgr.fill('#sreqTitle', 'PACU');
 await mgr.click('#sreqSetup button');
 check('link is created', await until(mgr, () => !!sreqForm && !document.getElementById('sreqLinkBox').hidden && sreqState === 'ready'));
 const link = await mgr.inputValue('#sreqUrl');
 check('link points at the request page with a long random id', new RegExp('^' + BASE + '/request\\.html\\?f=[A-Za-z0-9]{28}$').test(link), link);
-check('link does not contain the unit code', !link.includes('cloud-test-unit'));
-check('roster sync still connected as the manager', await until(mgr, () => cloudStatus === 'synced' && cloudAuth === 'ok'));
+check('link gives away neither the old unit code nor the account', !link.includes('old-ward') && !link.includes(moved.uid) && !link.includes('ward@'));
 
 console.log('--- staff send a request (phone) ---');
 const sctx = await newContext({ viewport: { width: 390, height: 844 }, timezoneId: 'America/Los_Angeles', isMobile: true, hasTouch: true });
@@ -348,13 +479,15 @@ check('a malformed link shows "not valid"', await until(staff, () => !document.g
 await staff.goto(BASE + '/request.html');
 check('a link with no id shows "not valid"', await until(staff, () => !document.getElementById('vInvalid').hidden));
 
-await mgr.click('#sreqSignoutBtn');
-check('signing out closes the list and falls back to the anonymous sign-in',
-  await until(mgr, () => !mgrUser && sreqItems.length === 0 && !document.getElementById('sreqSignin').hidden &&
-    document.getElementById('sreqBadge').hidden && firebase.auth().currentUser && firebase.auth().currentUser.isAnonymous));
-check('roster sync is connected again after signing out', await until(mgr, () => cloudStatus === 'synced' && cloudAuth === 'ok'));
-check('a signed-out device cannot read the requests', await mgr.evaluate(id =>
-  firebase.firestore().collection('requestForms').doc(id).collection('requests').get().then(() => 'ok', e => e.code), link2.split('f=')[1]) === 'permission-denied');
+await mgr.evaluate(() => closeStaffReq());
+await mgr.click('button[aria-label="Sign out and lock the app"]');
+check('signing out locks the app and empties the list',
+  await until(mgr, () => !mgrUser && sreqItems.length === 0 && document.getElementById('sreqBadge').hidden && firebase.auth().currentUser === null) && await locked(mgr));
+const shut = await mgr.evaluate(async ({ id, uid }) => {
+  const res = p => p.then(() => 'ok', e => e.code), db = firebase.firestore();
+  return [await res(db.collection('requestForms').doc(id).collection('requests').get()), await res(db.collection('rosters').doc(uid).get())];
+}, { id: link2.split('f=')[1], uid: moved.uid });
+check('a signed-out device can read neither the requests nor the roster', shut.every(r => r === 'permission-denied'), shut.join());
 
 check('no page errors', pageErrors.length === 0, pageErrors.join(' | '));
 await browser.close();

@@ -15,8 +15,8 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
 npm run test:unit      # 53 engine unit tests in plain Node, ~0.5s
-npm test               # 119 checks driving the app in headless Chromium, ~40s
-npm run test:cloud     # 110 checks of firestore.rules + the staff request link, in the
+npm test               # 133 checks driving the app in headless Chromium, ~50s
+npm run test:cloud     # 147 checks of firestore.rules, sign-in, roster sync + the staff link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
 
@@ -246,6 +246,39 @@ sweep, `git stash pop`. Count the three things that matter: nurses off the 4/3 o
 nurses working 4+ days in a row, and nights staffed below the minimum. A change that fixes
 one rule by quietly loosening another will otherwise look like a success.
 
+## Sign-in, the lock screen and the cloud roster
+
+One **manager account** (Firebase email + password, created by hand in the console)
+does everything: it opens the app, owns the cloud roster and reads the staff requests.
+There is no shared password and no anonymous sign-in; do not reintroduce either.
+
+- **`onAuthStateChanged` in `initCloud()` is the only switch.** A user → `lockOpen()`,
+  `connectRoster(uid)`, `sreqSetManager(user)`. No user → `lockShow()` and everything
+  disconnects. A leftover anonymous session is signed out.
+- **The lock screen is honest about what it is.** The server enforces access to cloud
+  data (`firestore.rules`); the screen cannot protect the copy in this browser's
+  storage. So a device that has signed in (`rn_signed`, in sessionStorage, or in
+  localStorage with *Keep me signed in*) opens at once and **also offline**; if
+  Firebase then reports no session, it locks again. That marker is not a security
+  boundary and must never gate anything the rules do not also gate.
+- **Roster location:** `rosters/{uid}` = `{state, updatedAt}`, readable and writable
+  only by that account. `schedules/{unitCode}` is legacy: no writes; a manager may
+  `get` it once (`seedRoster()` takes it over when the account has no roster yet and
+  the device still remembers `rn_unit`) and delete it from the Cloud window
+  (`legacyCheck/Use/Delete`).
+- **Who wins on connect** (`connectRoster`): first time a device meets an account →
+  the account's roster, with the device's previous state kept as an undo step.
+  Afterwards → the account's roster, **unless** the device changed since it last
+  agreed with the account (`stateSig()` vs `rn_synced`, i.e. edits made offline): then
+  the device's roster is pushed. Simultaneous edits are still last-write-wins (C4).
+- **`adoptCloudState()`** is the one place a cloud roster is applied; it also saves it
+  to the device (`saveState()` skips the cloud while `applyingRemote`).
+- **`probeRules()`** asks for a roster that is not ours. Refused → `cloudSecure=true`;
+  answered → the Cloud window says the database is NOT secured. This is how the app
+  can tell whether the rules were published; never replace it with an assumption.
+- **`test/audit.mjs` runs with the network blocked** and the `rn_signed` marker, i.e.
+  as a signed-in device that is offline. Anything needing Firebase is `test/cloud.mjs`.
+
 ## Staff request link (`request.html`)
 
 A second, standalone page for staff: `request.html?f=<form id>`. They pick their name,
@@ -262,9 +295,8 @@ manager reads the result in **Staff requests** (`openStaffReq()`), a reference l
   the form and `create` a request; only the password-account owner can read, tick
   `done`, delete, pause (`open:false`) or replace the form. Change the rules and
   `test/cloud.mjs` together.
-- **Two sign-ins.** `initCloud()` is driven by `onAuthStateChanged`: anonymous by
-  default, replaced by the manager's email/password session, restored on sign-out.
-  Never call `signInAnonymously()` unconditionally — it would log the manager out.
+- **Same sign-in as the app.** The window needs `mgrUser` (set from
+  `onAuthStateChanged`); opened offline it only says it needs a connection.
 - **The name list is published from the roster** (`sreqPeople()`: RNs in display order,
   then support staff) by `sreqPublish()`, debounced from `saveState()`.
 - **Everything received is untrusted** — `sreqClean()` then `escapeHtml()`, and the name
@@ -286,8 +318,8 @@ Settings → Night cycle. Treat that file as historical; trust `engine.js` and
 
 ## Security
 
-`SECURITY.md` and `firestore.rules` are the complete setup for the Firebase-backed cloud
-sync and the staff request link. The rules file is **not** applied by anything in this repo — it must be pasted into
+`SECURITY.md` and `firestore.rules` are the complete setup for sign-in, the Firebase-backed
+cloud sync and the staff request link. The rules file is **not** applied by anything in this repo — it must be pasted into
 the Firebase console and published by hand, and the account and membership steps in
 `SECURITY.md` have to be done in order. Do not describe the cloud data as protected until
 those steps have actually been carried out.

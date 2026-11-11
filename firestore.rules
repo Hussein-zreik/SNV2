@@ -5,35 +5,52 @@ rules_version = '2';
 // Paste these into: Firebase console -> Firestore Database -> Rules -> Publish.
 // See SECURITY.md for the setup steps and their order.
 //
-// Two areas:
+// Three areas:
 //
-//   schedules/{unitCode}      the roster itself (cloud sync). Any signed-in client
-//                             that knows the unit code can read and write it, so the
-//                             code must be treated as a secret (see SECURITY.md).
+//   rosters/{uid}             the roster itself (cloud sync). One document per manager
+//                             account; only that account — signed in with email +
+//                             password — can read or write it. There is no shared code.
+//
+//   schedules/{unitCode}      LEGACY. Where the roster lived when it was shared by a
+//                             unit code. Nothing can be written there any more; a
+//                             manager account may read it once (to move the roster into
+//                             its own document) and delete it.
 //
 //   requestForms/{formId}     the staff request link. formId is a long random id in
-//                             the link, separate from the unit code:
-//     - anyone holding the link can read the form (the RN name list) and SEND a
+//                             the link:
+//     - anyone holding the link can read the form (the staff name list) and SEND a
 //       request off; they can never read, change or delete a request;
-//     - only the manager who created the form — signed in with email + password —
-//       can read the requests, mark them done, delete them, or pause the form.
+//     - only the manager who created the form can read the requests, mark them done,
+//       delete them, or pause the form.
+//
+// A "manager" is any account signed in with a password. Create that account by hand
+// (Authentication -> Users -> Add user) and keep public sign-up closed.
 //
 // test/cloud.mjs runs these rules in the Firebase emulator (npm run test:cloud).
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ---------- roster sync ----------
-    match /schedules/{unitCode} {
-      allow read, write: if request.auth != null;
-    }
-
-    // ---------- staff request forms ----------
-    // a manager is signed in with a password account, never the anonymous sign-in
+    // a manager is signed in with a password account, never an anonymous sign-in
     function isManager() {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider == 'password';
     }
+
+    // ---------- roster sync ----------
+    match /rosters/{uid} {
+      allow read, delete: if isManager() && request.auth.uid == uid;
+      allow create, update: if isManager() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['state', 'updatedAt'])
+        && request.resource.data.state is map;
+    }
+
+    // ---------- legacy: the roster shared by unit code ----------
+    match /schedules/{unitCode} {
+      allow get, delete: if isManager();
+    }
+
+    // ---------- staff request forms ----------
     function formData(formId) {
       return get(/databases/$(database)/documents/requestForms/$(formId)).data;
     }

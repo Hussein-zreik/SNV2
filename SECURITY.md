@@ -1,70 +1,90 @@
 # Securing the cloud database
 
-**Status right now:** the app signs in anonymously automatically, but your
-Firestore rules are still the wide-open default (`allow read, write: if true`).
-Until you do the two steps below, **anyone who finds the database can read or
-change every nurse's schedule.** Nurse names and rosters are personal data.
+The app opens with **one manager account** (email + password). That same sign-in is
+what the server checks before it hands over the cloud roster or the staff requests.
+There is no shared password and no unit code any more.
 
-The Cloud panel in the app tells you which state you're in:
+Two things are **not** done by anything in this repository — you do them by hand in
+the Firebase console, once:
 
-- ⚠ *Database NOT secured* — still open, do the steps below
-- 🔒 *Database secured (signed in)* — done
+- creating the manager account, and
+- publishing [`firestore.rules`](./firestore.rules).
 
----
+Until the rules are published the database is only as closed as whatever rules are
+live now. The app checks this itself: **Cloud** shows either
 
-## Do these two steps in order
-
-Order matters. If you publish the rules before enabling sign-in, the app loses
-cloud access until you finish step 1.
-
-### Step 1 — Enable Anonymous sign-in
-
-1. Open the [Firebase console](https://console.firebase.google.com/) and pick
-   the **schedule-nursing-f14e5** project.
-2. Left menu: **Build → Authentication**.
-3. If you've never opened it, click **Get started**.
-4. Open the **Sign-in method** tab.
-5. Click **Anonymous**, toggle it **Enable**, and **Save**.
-
-### Step 2 — Publish the rules
-
-1. Left menu: **Build → Firestore Database**.
-2. Open the **Rules** tab.
-3. Replace everything in the editor with the contents of
-   [`firestore.rules`](./firestore.rules).
-4. Click **Publish**.
-
-### Step 3 — Check it worked
-
-1. Hard-refresh the app (**Ctrl+Shift+R**; on a phone close the tab and reopen).
-2. Open **Cloud**. It should say **🔒 Database secured (signed in)**.
-3. Make a small edit on one device and confirm it still appears on another.
-
-If the Cloud button turns red, re-check that Anonymous sign-in is enabled
-(step 1), then reload.
+- 🔒 *Rules check passed* — it asked for a roster that is not yours and was refused, or
+- ⚠ *Database NOT secured* — the request was answered; publish the rules.
 
 ---
 
-## What this does and does not protect
+## Set it up (once, in this order)
 
-**Protects against:** anonymous scripts and casual access to the database,
-and access to any collection other than `schedules`.
+Order matters: from the moment this version of the app is live, nobody can open it
+without the account from step 2.
 
-**Does not protect against:** someone who both signs in anonymously *and* knows
-your unit code. Anonymous sign-in is open to anyone by design, so the unit code
-is effectively the shared secret.
+1. **Switch on Email/Password.** [Firebase console](https://console.firebase.google.com/)
+   → project **schedule-nursing-f14e5** → **Build → Authentication → Sign-in method →
+   Email/Password → Enable → Save**. (Leave "Email link" off.)
+2. **Create your manager account.** Authentication → **Users → Add user**. Your email
+   and a strong password that you use nowhere else.
+3. **Close public sign-up.** Authentication → **Settings → User actions** → untick
+   **Enable create (sign-up)** → Save. Otherwise a stranger could make an account in
+   your project. (They could not read your roster or requests — see below — but until
+   step 6 they could read the old shared copy if they knew the unit code.)
+4. **Publish the rules.** Firestore Database → **Rules** → replace everything with the
+   contents of [`firestore.rules`](./firestore.rules) → **Publish**.
+5. **Sign in to the app** on the device that has your current roster. The roster that
+   was shared under the unit code moves into your account by itself. Open **Cloud**
+   and confirm it says **🔒 Rules check passed**.
+6. **Delete the old shared copy.** Cloud → *Old shared copy (unit code)* → **Check** →
+   **Delete old copy**. That copy holds staff names and sat under a code that was
+   public, so do not skip this.
+7. **Switch Anonymous sign-in off.** Authentication → Sign-in method → **Anonymous** →
+   disable. The app no longer uses it.
 
-**Practical advice:** treat the unit code like a password — never write it in
-this repository (it is public), in a screenshot, or in a chat. Use something
-long and unguessable (for example a ward name plus 8 random characters), not a
-short word.
+On each further device: just sign in. It receives the roster from your account.
 
-> **If your unit code has ever appeared in this repository's files or history,
-> consider it public and change it now** (steps below). An earlier version of
-> this file named one.
-You can change it any time: open **Cloud**, enter the new code, press
-**Connect** on each device. (Export a backup first — a new code starts a new
-empty document, then your device pushes its current schedule into it.)
+### Check it worked
+
+1. **Cloud** says *The roster is saved to <your email>* and *🔒 Rules check passed*.
+2. Change a cell on one device; it appears on another within a few seconds.
+3. Press the padlock (sign out). The app locks, and a reload stays locked.
+
+---
+
+## What this protects, and what it does not
+
+| | |
+|---|---|
+| Cloud roster | Only your account can read or change it (`rosters/{your account id}`) |
+| Staff requests | Only your account can read them (see below) |
+| Old unit-code copy | Nothing can be written there; a signed-in manager can read and delete it |
+| Everything else in the database | Closed |
+
+Be aware of the limits:
+
+- **Your password is the key.** Anyone who has it has everything. To change it:
+  Firebase console → Authentication → Users → ⋮ → Reset password, or **Forgot
+  password?** on the sign-in screen.
+- **The sign-in screen does not encrypt what is on the device.** The browser keeps a
+  copy of the roster in its own storage so the app works offline; someone with
+  technical skill and access to an unlocked computer could read it. Use a device
+  login, and leave **Keep me signed in** unticked on a shared ward computer — then
+  the sign-in ends with the browser session.
+- **Offline.** With *Keep me signed in*, the app opens without internet and works from
+  the device's copy; the changes are sent to your account the next time it opens
+  online. A device that has never signed in cannot be opened offline.
+- **Two devices editing at the same moment** still overwrite each other (the last
+  save wins). Edit from one device at a time.
+- **One account.** Colleagues with their own accounts, or view-only access, are not
+  built yet.
+
+`npm run test:cloud` runs the rules in the Firebase emulator (who may do what, then
+the real pages end to end). That proves the rules file. Only the **Cloud** window's
+rules check, on the real project, proves they were published.
+
+---
 
 ## Staff request link
 
@@ -72,24 +92,12 @@ Staff open a link (`request.html?f=…`), pick their name and the day(s) they wa
 off, write a reason and send it. You read what arrives in the app under
 **Staff requests**. It is a reference list: nothing a nurse sends changes the roster.
 
-### Set it up (once, in this order)
+### Set it up
 
-1. **Anonymous sign-in must already be on** (Step 1 at the top of this file). The
-   rules you publish in step 4 require it for the roster sync.
-2. **Switch on Email/Password.** Firebase console → **Build → Authentication →
-   Sign-in method → Email/Password → Enable → Save**. (Leave "Email link" off.)
-3. **Create your manager account.** Authentication → **Users → Add user**. Enter
-   your email and a strong password that you use nowhere else. This is the only
-   account that will be able to read staff requests.
-4. **Close public sign-up.** Authentication → **Settings → User actions** → untick
-   **Enable create (sign-up)** → Save. Otherwise a stranger could make an account
-   in your project. (They still could not read your requests — see below — but
-   there is no reason to allow it.)
-5. **Publish the rules.** Firestore Database → **Rules** → replace everything with
-   the contents of [`firestore.rules`](./firestore.rules) → **Publish**.
-6. **Create the link.** In the app: **Staff requests** → sign in with the account
-   from step 3 → type the ward name → **Create the staff link** → **Copy link** →
-   send it to your staff (WhatsApp group, email).
+Do the steps under **Set it up** at the top of this file first. Then, in the app:
+**Staff requests** → type the ward name → **Create the staff link** → **Copy link** →
+send it to your staff (WhatsApp group, email). You are already signed in — the app
+uses the same account.
 
 ### Check it worked
 
@@ -106,7 +114,7 @@ off, write a reason and send it. You read what arrives in the app under
 | A person with the link **can** | see the list of staff names, and send a request |
 | A person with the link **cannot** | read, change or delete any request — not even their own |
 | Only the manager account **can** | read the requests, tick them done, delete them, pause or replace the link |
-| The link **does not contain** | the unit code — it cannot open the roster |
+| The link **does not contain** | your account or any password — it cannot open the roster |
 
 Be aware of the limits:
 
@@ -120,28 +128,6 @@ Be aware of the limits:
   delete requests once dealt with, and check your hospital's rules on where staff
   data may be stored before using this with real names.
 - **Your manager password is the key.** Anyone who has it can read every request.
-
-`npm run test:cloud` runs these rules in the Firebase emulator (110 checks: who
-may do what, then both pages end to end). That proves the rules file; it cannot
-prove the rules were published — only the check above on the real project does.
-
-## If you want proper per-person accounts
-
-The stronger setup is one login per person instead of a shared code:
-
-1. In **Authentication → Sign-in method**, enable **Email/Password**.
-2. Add each scheduler as a user under the **Users** tab.
-3. Change the rule to list who may access the unit, e.g.:
-
-   ```
-   match /schedules/{unitCode} {
-     allow read, write: if request.auth != null
-       && request.auth.token.email in ['you@example.com','colleague@example.com'];
-   }
-   ```
-
-That also gives you a real audit trail (who changed what), which the shared
-password cannot. Ask and I can wire the login screen up to it.
 
 ---
 

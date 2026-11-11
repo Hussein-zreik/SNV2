@@ -272,6 +272,9 @@ tbody td.sh-cell.is-today .sc.s-OFF{background:transparent}
 .lock-title{font-size:var(--fs-md);font-weight:600;color:var(--text-strong);margin-bottom:var(--sp-1);letter-spacing:-0.01em}
 .lock-sub{font-size:var(--fs-sm);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)}
 .lock-err{font-size:var(--fs-xs);color:var(--neg);min-height:16px;margin:2px 0 var(--sp-2)}
+.lock-keep{display:block;font-size:var(--fs-xs);color:var(--text-2);margin:0 0 var(--sp-2);cursor:pointer;line-height:var(--lh-normal)}
+.lock-keep input{vertical-align:-2px;margin-right:4px}
+.lock-keep span{display:block;color:var(--muted-3);margin:2px 0 0 20px}
 .lock-links{display:flex;justify-content:space-between;margin-top:12px}
 .lock-links a{font-size:11px;color:var(--muted-2);cursor:pointer}
 .lock-links a:hover{color:var(--text-2);text-decoration:underline}
@@ -546,10 +549,13 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 <div id="lockScreen" class="lock-wrap">
   <div class="lock-box">
     <div class="lock-title">RN Rotating Schedule</div>
-    <div class="lock-sub">Enter password to continue</div>
-    <input class="ninput" id="pw1" type="password" placeholder="Password" autocomplete="off">
-    <div class="lock-err" id="lockErr"></div>
-    <button class="btn accent" id="lockBtn" style="width:100%;justify-content:center" onclick="lockSubmit()">Unlock</button>
+    <div class="lock-sub">Sign in with the manager account to open the roster.</div>
+    <input class="ninput" id="lockEmail" type="email" placeholder="Email" autocomplete="username" aria-label="Email">
+    <input class="ninput" id="pw1" type="password" placeholder="Password" autocomplete="current-password" aria-label="Password">
+    <label class="lock-keep"><input type="checkbox" id="lockKeep"> Keep me signed in on this device<span>Tick only on a device that is yours. It also lets the app open when the internet is down.</span></label>
+    <div class="lock-err" id="lockErr" role="alert"></div>
+    <button class="btn accent" id="lockGo" style="width:100%;justify-content:center" onclick="lockSubmit()">Sign in</button>
+    <div class="lock-links"><a role="button" tabindex="0" onclick="lockForgot()" onkeydown="if(event.key==='Enter')lockForgot()">Forgot password?</a></div>
   </div>
 </div>
 <div class="app" id="appRoot">
@@ -629,7 +635,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <button class="btn ghost" id="cloudBtn" onclick="openCloud()" title="Cloud sync across devices">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 18 18z"/></svg><span class="btxt">Cloud</span>
       </button>
-      <button class="btn ghost icon-only" onclick="lockApp()" aria-label="Lock the app" title="Lock the app (require password)">
+      <button class="btn ghost icon-only" onclick="lockApp()" aria-label="Sign out and lock the app" title="Sign out and lock the app">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
       </button>
       <button class="btn ghost" id="themeBtn" onclick="toggleTheme()" aria-label="Toggle light or dark theme" title="Toggle theme"></button>
@@ -868,23 +874,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <h3 style="margin:0">Staff requests</h3>
       <span class="sreq-msg" id="sreqWho"></span>
     </div>
-    <div class="req-empty" id="sreqOff" hidden>The staff request link needs an internet connection (Firebase could not be loaded). Check the connection and reload the page.</div>
-    <!-- not signed in as the manager -->
-    <div class="req-form" id="sreqSignin" hidden>
-      <div class="req-note" style="margin:0 0 10px">Staff send a <b>Req off</b> with a reason through a link you share. What they send is private: only the manager account can read it. Sign in with the manager email and password created in the Firebase console (SECURITY.md, “Staff request link”).</div>
-      <div class="req-line">
-        <label class="req-lbl">Manager email
-          <input class="ninput" id="sreqEmail" type="email" autocomplete="username" style="margin:0" onkeydown="if(event.key==='Enter')sreqSignIn()">
-        </label>
-        <label class="req-lbl">Password
-          <input class="ninput" id="sreqPw" type="password" autocomplete="current-password" style="margin:0" onkeydown="if(event.key==='Enter')sreqSignIn()">
-        </label>
-      </div>
-      <div class="mactions" style="justify-content:flex-start">
-        <button class="btn accent" id="sreqSigninBtn" onclick="sreqSignIn()">Sign in</button>
-        <span class="sreq-msg" id="sreqSigninMsg" role="status"></span>
-      </div>
-    </div>
+    <div class="req-empty" id="sreqOff" hidden>Staff requests need an internet connection. The app is open offline on this device — check the connection and reload the page.</div>
     <!-- signed in -->
     <div id="sreqMain" hidden>
       <div class="req-form">
@@ -914,9 +904,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <div class="report-body" id="sreqList" style="max-height:38vh"></div>
       <div class="req-note">A reference list only — nothing here changes the roster. To grant a request, add it in the <b>Requests</b> window, then tick it here as done.</div>
     </div>
-    <div class="mactions" style="margin-top:1rem;justify-content:space-between">
-      <button class="btn" id="sreqSignoutBtn" onclick="sreqSignOut()" hidden>Sign out</button>
-      <span></span>
+    <div class="mactions" style="margin-top:1rem">
       <button class="btn accent" onclick="closeStaffReq()">Close</button>
     </div>
   </div>
@@ -924,9 +912,21 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 <div class="modal-wrap" id="cloudModal">
   <div class="modal">
     <h3>Cloud sync</h3>
-    <div class="slbl">Unit code (share with your team)</div>
-    <input class="ninput" id="unitInput" type="text" placeholder="e.g. ward-5b" autocomplete="off">
-    <div id="cloudStatusMsg" style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)"></div>
+    <div id="cloudStatusMsg" style="font-size:var(--fs-sm);color:var(--text-2);margin-bottom:var(--sp-2);line-height:var(--lh-normal)"></div>
+    <div id="cloudSecureMsg" style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)"></div>
+    <div id="legacyBox">
+      <div class="slbl">Old shared copy (unit code)</div>
+      <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:6px;line-height:var(--lh-normal)">Before sign-in, the roster was shared under a unit code that anyone could use. Check whether a copy is still stored there, then delete it.</div>
+      <div style="display:flex;gap:var(--sp-2)">
+        <input class="ninput" id="unitInput" type="text" placeholder="old unit code" autocomplete="off" style="margin:0" aria-label="Old unit code">
+        <button class="btn" onclick="legacyCheck()">Check</button>
+      </div>
+      <div id="legacyMsg" role="status" style="font-size:var(--fs-xs);color:var(--muted-2);margin:6px 0;line-height:var(--lh-normal);min-height:16px"></div>
+      <div id="legacyActions" style="display:none;gap:var(--sp-2);margin-bottom:var(--sp-4)">
+        <button class="btn" style="flex:1" onclick="legacyUse()" title="Replace the roster in your account with the old shared copy">Use this roster</button>
+        <button class="btn danger" style="flex:1" onclick="legacyDelete()" title="Delete the old shared copy for good">Delete old copy</button>
+      </div>
+    </div>
     <div class="slbl">Backup</div>
     <div style="display:flex;gap:var(--sp-2);margin-bottom:var(--sp-2)">
       <button class="btn" style="flex:1" onclick="exportBackup()" title="Download a full backup file (roster, requests, schedule settings)">
@@ -938,12 +938,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
       <input type="file" id="importFile" accept="application/json,.json" style="display:none" onchange="importBackup(this)">
     </div>
     <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)">Export saves everything to a file on this device. Import replaces the current schedule — you'll be asked to confirm, and it can be undone.</div>
-    <div class="mactions" style="justify-content:space-between">
-      <button class="btn danger" onclick="disconnectCloud()" title="Stop syncing on this device">Disconnect</button>
-      <span style="display:flex;gap:8px">
-        <button class="btn" onclick="closeCloud()">Close</button>
-        <button class="btn accent" onclick="connectFromInput()">Connect</button>
-      </span>
+    <div class="mactions">
+      <button class="btn accent" onclick="closeCloud()">Close</button>
     </div>
   </div>
 </div>
@@ -1469,7 +1465,11 @@ function loadState(){
   }catch(e){/* ignore corrupt state */}
 }
 
-/* ---------- cloud sync (Firebase Firestore, shared by unit code) ---------- */
+/* ---------- cloud sync (Firebase Firestore, one roster per manager account) ---------- */
+// The roster syncs to rosters/{uid}: firestore.rules lets only that signed-in account
+// read or write it. There is no shared secret — the unit code this replaced was one,
+// and it was public. The old location (schedules/{unitCode}) is read once to move the
+// roster across and can then be deleted from the Cloud window (legacy* below).
 const firebaseConfig={
   apiKey:"AIzaSyCVo5fHRCzbwcM1_KtS_JC36iDpiNTgr84",
   authDomain:"schedule-nursing-f14e5.firebaseapp.com",
@@ -1478,106 +1478,203 @@ const firebaseConfig={
   messagingSenderId:"878601839531",
   appId:"1:878601839531:web:f6c3d2e92ae0c80d1fa8ee"
 };
-let cloudDb=null,unitCode='',cloudUnsub=null,applyingRemote=false,cloudStatus='off',pushTimer=null,cloudTries=0;
-let cloudAuth='off'; // 'ok' = signed in (rules can require auth) | 'pending' | 'off'
+let cloudDb=null,cloudUid='',cloudUnsub=null,applyingRemote=false,cloudStatus='off',pushTimer=null,cloudTries=0;
+let cloudAuth='pending'; // 'pending' = waiting for Firebase | 'ok' = signed in as the manager | 'off' = nobody (or no Firebase)
+let cloudSecure=null;    // result of probeRules(): true | false | null (not known)
+let cloudSeeding=false,legacyFound='';
 function initCloud(){
-  if(!window.firebase||!window.firebase.firestore){ // SDK still loading (deferred)
+  if(!window.firebase||!window.firebase.firestore||!window.firebase.auth){ // SDK still loading (deferred)
     if(cloudTries++<50)return setTimeout(initCloud,150);
-    cloudStatus='unavailable';updateCloudUI();return;
+    cloudAuth='off';cloudStatus='unavailable';updateCloudUI();lockOffline();return;
   }
   try{ if(!firebase.apps.length)firebase.initializeApp(firebaseConfig); cloudDb=firebase.firestore(); }
-  catch(e){ cloudStatus='unavailable';updateCloudUI();return; }
-  // Every device is signed in, so the Firestore rules can require an authenticated
-  // user (see firestore.rules + SECURITY.md): anonymously by default, or as the
-  // manager (email + password) once they sign in from the Staff requests window.
-  // Driven by the auth state, so the anonymous sign-in never replaces a manager
-  // session and comes back after a sign-out. Deliberately non-blocking: if
-  // Anonymous sign-in isn't enabled in the Firebase console yet, sync keeps working
-  // as before — it just stays unprotected, which the Cloud panel reports.
-  try{
-    if(firebase.auth){
-      cloudAuth='pending';
-      firebase.auth().onAuthStateChanged(user=>{
-        if(!user){
-          sreqSetManager(null);
-          firebase.auth().signInAnonymously()
-            .catch(err=>{cloudAuth='off';console.warn('Cloud auth unavailable ('+(err&&err.code)+') — enable Anonymous sign-in in the Firebase console to secure the database');updateCloudUI();});
-          return;
-        }
-        cloudAuth='ok';updateCloudUI();
-        if(unitCode&&cloudStatus==='error')connectCloud(unitCode);   // a listener refused while signed out
-        sreqSetManager(user.isAnonymous?null:user);
-      });
+  catch(e){ cloudAuth='off';cloudStatus='unavailable';updateCloudUI();lockOffline();return; }
+  // The signed-in account decides everything: it opens the app (lock screen), owns the
+  // cloud roster and reads the staff requests. Nobody is signed in anonymously any more.
+  firebase.auth().onAuthStateChanged(user=>{
+    if(user&&user.isAnonymous){firebase.auth().signOut().catch(()=>{});return;}  // left over from the unit-code version
+    if(!user){
+      cloudAuth='off';connectRoster('');sreqSetManager(null);lockShow();
+      return;
     }
-  }catch(e){cloudAuth='off';}
-  try{ const saved=localStorage.getItem('rn_unit'); if(saved)connectCloud(saved); else updateCloudUI(); }
-  catch(e){ updateCloudUI(); }
+    cloudAuth='ok';lockOpen();
+    connectRoster(user.uid);sreqSetManager(user);
+  });
 }
 function sanitizeCode(c){return String(c||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');}
-function connectCloud(code){
-  code=sanitizeCode(code);
-  if(cloudUnsub){cloudUnsub();cloudUnsub=null;}
-  unitCode=code;
-  try{localStorage.setItem('rn_unit',code);}catch(e){}
-  if(!code||!cloudDb){cloudStatus=code?'unavailable':'off';updateCloudUI();return;}
-  cloudStatus='connecting';updateCloudUI();
-  const ref=cloudDb.collection('schedules').doc(code);
-  cloudUnsub=ref.onSnapshot(snap=>{
-    if(snap.metadata.hasPendingWrites)return;         // ignore our own local echo
-    if(!snap.exists){ pushCloud(); cloudStatus='synced'; updateCloudUI(); return; } // seed a new unit
-    const data=snap.data();
-    if(data&&data.state&&!pushTimer){ // skip while we have unpushed local edits (keep ours)
-      if(JSON.stringify(data.state)!==JSON.stringify(cloudStateObj())){ // only if actually different
-        applyingRemote=true; applyStateObject(data.state);
-        const si=document.getElementById('startDate'); if(startDateStr)si.value=startDateStr;
-        cycleOffset=autoOffset(startDateStr); render(); applyingRemote=false;
-        toast('Schedule updated from cloud');
-      }
-    }
-    cloudStatus='synced';updateCloudUI();
-  },err=>{ console.error('cloud sync error',err); cloudStatus='error'; updateCloudUI(); });
+function rosterRef(){return cloudDb.collection('rosters').doc(cloudUid);}
+// A fingerprint of the roster as it was when this device and the account last agreed.
+// If the roster on the device no longer matches it, the device holds edits the account
+// has not seen (made offline) — those are sent up instead of being overwritten.
+function stateSig(){
+  const t=JSON.stringify(cloudStateObj());let h=5381;
+  for(let i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;
+  return t.length+':'+(h>>>0).toString(36);
 }
-function disconnectCloud(){ if(cloudUnsub){cloudUnsub();cloudUnsub=null;} unitCode=''; try{localStorage.removeItem('rn_unit');}catch(e){} cloudStatus='off'; updateCloudUI(); toast('Cloud sync turned off'); }
+function markSynced(sig){try{localStorage.setItem('rn_synced',sig||stateSig());}catch(e){}}
+function localAhead(){try{const v=localStorage.getItem('rn_synced');return !!v&&v!==stateSig();}catch(e){return false;}}
+// put a roster that came from the cloud on screen and in this device's storage.
+// `label` records what was here before as an undo step (first load on a device, or
+// taking over the old shared copy) so nothing local is lost without a way back.
+function adoptCloudState(state,label){
+  const before=label?snapshot():null;
+  applyingRemote=true;
+  try{
+    applyStateObject(state);
+    const si=document.getElementById('startDate'); if(startDateStr)si.value=startDateStr;
+    cycleOffset=autoOffset(startDateStr);
+    if(before)pushHistory(label,before);
+    render();saveState();                    // saveState skips the cloud while applyingRemote
+  }finally{applyingRemote=false;}
+}
+function connectRoster(uid){
+  if(cloudUnsub){cloudUnsub();cloudUnsub=null;}
+  clearTimeout(pushTimer);pushTimer=null;cloudSeeding=false;cloudSecure=null;
+  cloudUid=uid||'';
+  if(!cloudUid||!cloudDb){cloudStatus=cloudDb?'off':'unavailable';updateCloudUI();return;}
+  cloudStatus='connecting';updateCloudUI();
+  let seenKey='';try{seenKey=localStorage.getItem('rn_roster_uid')||'';}catch(e){}
+  let first=seenKey!==uid;                      // first time this device meets this account's roster
+  cloudUnsub=rosterRef().onSnapshot(snap=>{
+    if(uid!==cloudUid||snap.metadata.hasPendingWrites)return;   // stale listener, or our own local echo
+    if(!snap.exists){seedRoster(uid);return;}                   // nothing in the account yet
+    const data=snap.data();
+    if(data&&isObj(data.state)&&!pushTimer){ // skip while we have unpushed local edits (keep ours)
+      if(JSON.stringify(data.state)!==JSON.stringify(cloudStateObj())){ // only if actually different
+        if(!first&&localAhead()){               // edits made while offline: send them, don't lose them
+          pushCloud();toast('Changes made offline were sent to your account');return;
+        }
+        adoptCloudState(data.state,first?'Before loading the roster from your account':'');
+        toast(first?'Roster loaded from your account':'Schedule updated from cloud');
+      }
+      markSynced();
+    }
+    if(first){first=false;try{localStorage.setItem('rn_roster_uid',uid);}catch(e){}}
+    cloudStatus='synced';updateCloudUI();
+  },err=>{ console.error('cloud sync error',err); if(uid===cloudUid){cloudStatus='error'; updateCloudUI();} });
+  probeRules(uid);
+}
+// The account has no roster yet. If this device still remembers a unit code and a
+// roster is stored under it, that shared copy is the latest truth: take it over.
+// Otherwise the roster on this device becomes the account's roster.
+function seedRoster(uid){
+  if(cloudSeeding)return;cloudSeeding=true;
+  const done=()=>{cloudSeeding=false;if(uid===cloudUid)pushCloud();};
+  const code=legacyCode();
+  if(!code){done();return;}
+  cloudDb.collection('schedules').doc(code).get().then(s=>{
+    const d=s.exists?s.data():null;
+    if(uid===cloudUid&&d&&isObj(d.state)){
+      adoptCloudState(d.state,'Before moving the shared roster into your account');
+      legacyFound=code;
+      toast('Roster moved into your account — open Cloud to delete the old shared copy');
+    }
+    done();
+  }).catch(err=>{console.warn('old shared copy not readable',err&&err.code);done();});
+}
+// Are the published rules really closing the database? Ask for a roster that is not
+// ours: the rules in firestore.rules refuse it. If the read is allowed, the rules were
+// never published (or are wide open) and the Cloud window says so in plain words.
+function probeRules(uid){
+  cloudDb.collection('rosters').doc('rules-probe-not-'+uid).get()
+    .then(()=>{if(uid===cloudUid){cloudSecure=false;updateCloudUI();}})
+    .catch(err=>{if(uid===cloudUid){cloudSecure=(err&&err.code)==='permission-denied'?true:null;updateCloudUI();}});
+}
 function cloudSave(){ // called from saveState; debounced push
-  if(applyingRemote||!unitCode||!cloudDb)return;
+  if(applyingRemote||!cloudUid||!cloudDb)return;
   clearTimeout(pushTimer);
   pushTimer=setTimeout(pushCloud,600);
 }
 function pushCloud(){
   pushTimer=null; // clear the pending-push flag; if left set, the snapshot guard
-                  // below (`!pushTimer`) stayed false forever and this device
+                  // (`!pushTimer`) stayed false forever and this device
                   // stopped accepting ANY remote update after its first edit.
-  if(!unitCode||!cloudDb)return;
-  cloudDb.collection('schedules').doc(unitCode).set({state:cloudStateObj(),updatedAt:Date.now()})
-    .then(()=>{cloudStatus='synced';updateCloudUI();})
-    .catch(e=>{console.error('cloud push failed',e);cloudStatus='error';updateCloudUI();});
+  if(!cloudUid||!cloudDb)return;
+  const uid=cloudUid,sig=stateSig();
+  rosterRef().set({state:cloudStateObj(),updatedAt:Date.now()})
+    .then(()=>{if(uid===cloudUid){markSynced(sig);cloudStatus='synced';updateCloudUI();}})
+    .catch(e=>{console.error('cloud push failed',e);if(uid===cloudUid){cloudStatus='error';updateCloudUI();}});
 }
 function updateCloudUI(){
   const b=document.getElementById('cloudBtn'); if(!b)return;
   const cloud='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 18 18z"/></svg>';
-  const map={off:['Cloud','',''],connecting:['Syncing…','warn',''],synced:['Synced','ok',unitCode],error:['Cloud error','bad',''],unavailable:['Cloud offline','',''] };
+  const map={off:['Cloud',''],connecting:['Syncing…','warn'],synced:['Synced','ok'],error:['Cloud error','bad'],unavailable:['Offline','']};
   const [label,cls]=map[cloudStatus]||map.off;
   b.className='btn ghost cloud-'+(cls||'');
-  b.innerHTML=cloud+'<span class="btxt">'+(cloudStatus==='synced'?('Synced · '+unitCode):label)+'</span>';
+  b.innerHTML=cloud+'<span class="btxt">'+label+'</span>';
   const msg=document.getElementById('cloudStatusMsg');
-  if(msg){const m={off:'Not connected. Enter a unit code and Connect to share this schedule live across devices.',connecting:'Connecting…',synced:'✓ Live-syncing as "'+unitCode+'". Anyone who enters this code shares this schedule.',error:'Connection error — check your unit code and internet, or the Firestore security rules.',unavailable:'Cloud unavailable (could not load Firebase). The app still works and saves locally.'};
-    let txt=m[cloudStatus]||m.off;
-    // tell the user plainly whether the database itself is protected
-    if(cloudStatus==='synced'||cloudStatus==='connecting')
-      txt+=cloudAuth==='ok'?'  🔒 Database secured (signed in).'
-                           :'  ⚠ Database NOT secured — anyone who finds it can read or change it. See SECURITY.md.';
-    msg.textContent=txt;}
-  const inp=document.getElementById('unitInput'); if(inp&&unitCode&&!inp.value)inp.value=unitCode;
+  if(msg){
+    const who=(window.firebase&&firebase.auth&&firebase.auth().currentUser&&firebase.auth().currentUser.email)||'your account';
+    const m={off:'Not syncing: nobody is signed in.',connecting:'Connecting…',
+      synced:'✓ The roster is saved to '+who+' and kept in step on every device signed in with it.',
+      error:'The cloud refused the roster. Check the internet connection, and that the rules in firestore.rules are published in the Firebase console (SECURITY.md).',
+      unavailable:'Offline: the app is working from this device only. Changes are saved here and sent to your account when the page is next opened with a connection.'};
+    msg.textContent=m[cloudStatus]||m.off;
+  }
+  const sec=document.getElementById('cloudSecureMsg');
+  if(sec){
+    // say plainly whether the database itself is closed — from a test, not an assumption
+    // only claimed once our own roster is readable AND someone else's was refused
+    sec.textContent=!cloudUid||(cloudStatus!=='synced'&&cloudSecure!==false)?'':
+      cloudSecure===true?'🔒 Rules check passed: a roster that is not yours was refused.':
+      cloudSecure===false?'⚠ Database NOT secured — it answered a request it should have refused. Publish the rules in firestore.rules (SECURITY.md).':'';
+    sec.style.color=cloudSecure===false?'var(--neg)':'';
+  }
 }
-function openCloud(){updateCloudUI();const inp=document.getElementById('unitInput');if(inp)inp.value=unitCode;document.getElementById('cloudModal').classList.add('open');}
+function openCloud(){
+  updateCloudUI();
+  const inp=document.getElementById('unitInput');if(inp&&!inp.value)inp.value=legacyFound||legacyCode();
+  document.getElementById('cloudModal').classList.add('open');
+  if(inp&&inp.value&&cloudUid)legacyCheck();
+}
 function closeCloud(){document.getElementById('cloudModal').classList.remove('open');}
-function connectFromInput(){const c=sanitizeCode(document.getElementById('unitInput').value);if(!c){toast('Enter a unit code first');return;}connectCloud(c);toast('Cloud sync on · '+c);}
+/* ---- the old shared copy: schedules/{unitCode}, from before sign-in ---- */
+function legacyCode(){try{return sanitizeCode(localStorage.getItem('rn_unit')||'');}catch(e){return '';}}
+function legacySay(text,bad){const m=document.getElementById('legacyMsg');if(m){m.textContent=text;m.style.color=bad?'var(--neg)':'';}}
+function legacyShow(on){const a=document.getElementById('legacyActions');if(a)a.style.display=on?'flex':'none';}
+function legacyRef(){
+  const code=sanitizeCode(document.getElementById('unitInput').value);
+  if(!code){legacySay('Type the old unit code first.',true);legacyShow(false);return null;}
+  if(!cloudUid||!cloudDb){legacySay('Needs an internet connection and a signed-in account.',true);legacyShow(false);return null;}
+  return {code,ref:cloudDb.collection('schedules').doc(code)};
+}
+function legacyCheck(){
+  const L=legacyRef();if(!L)return Promise.resolve();
+  legacySay('Checking…');
+  return L.ref.get().then(s=>{
+    const d=s.exists?s.data():null;
+    if(!d){legacySay(`Nothing is stored under “${L.code}” — there is no old copy to delete.`);legacyShow(false);
+      if(L.code===legacyCode()){try{localStorage.removeItem('rn_unit');}catch(e){}}
+      legacyFound='';return;}
+    const t=new Date(numOr(d.updatedAt,0,0,8.64e15));
+    legacySay(`⚠ A roster is still stored under “${L.code}”${d.updatedAt&&!isNaN(t)?` (last saved ${fmt(t)} ${t.getFullYear()})`:''}. It holds staff names. Once your account shows the right roster, delete it.`,true);
+    legacyFound=L.code;legacyShow(true);
+  }).catch(err=>{console.error('old copy',err);legacySay('Could not check — the connection failed, or the rules in firestore.rules are not published yet.',true);legacyShow(false);});
+}
+function legacyUse(){
+  const L=legacyRef();if(!L)return;
+  if(!confirm(`Replace the roster in your account, and on this device, with the old shared copy from “${L.code}”?\n\nYou can go back with Undo.`))return;
+  L.ref.get().then(s=>{
+    const d=s.exists?s.data():null;
+    if(!d||!isObj(d.state)){legacySay('That copy holds no roster.',true);return;}
+    adoptCloudState(d.state,'Before taking over the old shared roster');
+    pushCloud();toast('Old shared roster is now your account’s roster');
+  }).catch(()=>legacySay('Could not read the old copy.',true));
+}
+function legacyDelete(){
+  const L=legacyRef();if(!L)return;
+  if(!confirm(`Delete the old shared copy stored under “${L.code}”?\n\nThe roster in your account is not touched. Any device still using the unit code loses its cloud copy.\n\nThis cannot be undone.`))return;
+  L.ref.delete().then(()=>{
+    try{localStorage.removeItem('rn_unit');}catch(e){}
+    legacyFound='';legacyShow(false);legacySay('Old shared copy deleted.');toast('Old shared copy deleted');
+  }).catch(err=>{console.error('old copy',err);legacySay('Could not delete it — check the connection and the published rules.',true);});
+}
 
 /* ---------- staff request link (request.html) ---------- */
 // Staff open request.html?f=<form id>, pick their name and day(s) and SEND a Req off
 // with a reason. firestore.rules lets that page create a request and nothing else;
-// only the manager account (email + password) that created the form can read what
-// arrives. This window is that reader. It is a reference list: nothing here touches
+// only the manager account that created the form (the account the app is signed in
+// with) can read what arrives. This window is that reader. It is a reference list: nothing here touches
 // the roster, and none of it is persisted state — the form belongs to the manager's
 // account, so there is no PERSIST row. Everything received is untrusted: it goes
 // through sreqClean() and is escaped where it is shown.
@@ -1727,25 +1824,6 @@ function sreqDelete(id){
   if(!confirm(`Delete the request from ${sreqName(r)} (${sreqDatesLabel(r.dates)})?\n\nThis cannot be undone.`))return;
   sreqRef(id).delete().catch(err=>{console.error('staff request',err);toast('Could not delete — check the connection');});
 }
-function sreqSignIn(){
-  const btn=document.getElementById('sreqSigninBtn');
-  const email=document.getElementById('sreqEmail').value.trim(),pw=document.getElementById('sreqPw').value;
-  if(!email||!pw){sreqSay('sreqSigninMsg','Enter the manager email and password.',true);return;}
-  if(!cloudDb||!window.firebase||!firebase.auth){sreqSay('sreqSigninMsg','Cloud unavailable — check the connection and reload.',true);return;}
-  btn.disabled=true;sreqSay('sreqSigninMsg','Signing in…');
-  firebase.auth().signInWithEmailAndPassword(email,pw).then(()=>{
-    document.getElementById('sreqPw').value='';sreqSay('sreqSigninMsg','');
-  }).catch(err=>{
-    const c=(err&&err.code)||'';
-    sreqSay('sreqSigninMsg',
-      c==='auth/operation-not-allowed'?'Email/Password sign-in is not switched on in the Firebase console yet (SECURITY.md).':
-      c==='auth/too-many-requests'?'Too many attempts. Wait a few minutes and try again.':
-      c==='auth/network-request-failed'?'No connection. Check the internet and try again.':
-      c==='auth/invalid-email'?'That email address is not valid.':
-      'Email or password is not correct.',true);
-  }).then(()=>{btn.disabled=false;});
-}
-function sreqSignOut(){if(window.firebase&&firebase.auth)firebase.auth().signOut().catch(()=>{});}
 function sreqUrl(){return new URL('request.html?f='+sreqForm.id,location.href).href;}
 function sreqCopy(){
   const inp=document.getElementById('sreqUrl'),done=()=>toast('Link copied — send it to your staff');
@@ -1774,13 +1852,11 @@ function renderStaffReq(){
   const el=id=>document.getElementById(id),badge=el('sreqBadge');if(!badge)return;
   const fresh=sreqItems.filter(r=>!r.done).length;
   badge.hidden=!(mgrUser&&fresh);badge.textContent=fresh>99?'99+':String(fresh);
-  const off=!cloudDb||!window.firebase||!firebase.auth;
-  el('sreqOff').hidden=!off;
-  el('sreqSignin').hidden=off||!!mgrUser;
-  el('sreqMain').hidden=off||!mgrUser;
-  el('sreqSignoutBtn').hidden=!mgrUser;
+  // unlocked without a manager session = opened offline on a device that stays signed in
+  el('sreqOff').hidden=!!mgrUser;
+  el('sreqMain').hidden=!mgrUser;
   el('sreqWho').textContent=mgrUser?'Signed in as '+(mgrUser.email||'manager'):'';
-  if(off||!mgrUser)return;
+  if(!mgrUser)return;
   el('sreqSetup').hidden=!!sreqForm||sreqState!=='ready';
   el('sreqLinkBox').hidden=!sreqForm;
   if(sreqForm){
@@ -1819,40 +1895,85 @@ function renderStaffReqList(){
   }).join('');
 }
 
-/* ---------- password lock (one fixed password for everyone) ---------- */
-// The only accepted password, stored as a salted SHA-256 hash (not readable).
-// To change it, replace this value with the hash of the new password.
-const PW_HASH='s81d1e70cc34a3ab74777812ca6bb7e9077a19435dddb88ebbe0bae615f2a1594';
-async function hashPw(s){
-  try{ if(window.crypto&&crypto.subtle){
-    const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode('rn-salt:'+s));
-    return 's'+[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
-  } }catch(e){}
-  let h=5381>>>0;const t='rn-salt:'+s;for(let i=0;i<t.length;i++)h=(((h<<5)+h)+t.charCodeAt(i))>>>0;return 'f'+h.toString(16);
-}
+/* ---------- lock screen = account sign-in ---------- */
+// The app opens for the manager account (email + password, created in the Firebase
+// console). That one sign-in is what the server checks before it hands over the cloud
+// roster or the staff requests — unlike the shared password this replaced, which was
+// only compared inside the browser and protected nothing.
+// What it cannot do: hide the copy of the roster this browser keeps in its own storage.
+// A device that has signed in (SIGNED_KEY) opens straight away, also with no internet;
+// if Firebase then reports that nobody is signed in, the screen locks again.
+const SIGNED_KEY='rn_signed',KEEP_KEY='rn_keep';
 function lockEl(id){return document.getElementById(id);}
-async function lockSubmit(){
-  const err=lockEl('lockErr'),p1=lockEl('pw1').value;
-  if(!p1){err.textContent='Enter the password';return;}
-  if(await hashPw(p1)===PW_HASH){unlockApp();}
-  else{err.textContent='Wrong password';lockEl('pw1').value='';lockEl('pw1').focus();}
+function signedHere(){try{return sessionStorage.getItem(SIGNED_KEY)==='1'||localStorage.getItem(SIGNED_KEY)==='1';}catch(e){return false;}}
+function keepHere(){try{return localStorage.getItem(KEEP_KEY)==='1';}catch(e){return false;}}
+function markSigned(on){
+  try{
+    if(on){sessionStorage.setItem(SIGNED_KEY,'1');if(keepHere())localStorage.setItem(SIGNED_KEY,'1');else localStorage.removeItem(SIGNED_KEY);}
+    else{sessionStorage.removeItem(SIGNED_KEY);localStorage.removeItem(SIGNED_KEY);}
+  }catch(e){}
 }
-function unlockApp(){
-  try{sessionStorage.setItem('rn_unlocked','1');}catch(e){}
+function lockSay(text){lockEl('lockErr').textContent=text||'';}
+function lockOpen(){            // a manager session exists
+  markSigned(true);
   lockEl('lockScreen').classList.add('unlocked');
-  lockEl('pw1').value='';lockEl('lockErr').textContent='';
+  lockEl('pw1').value='';lockSay('');lockEl('lockGo').disabled=false;
 }
-function lockApp(){ // re-lock manually (requires the password again)
-  try{sessionStorage.removeItem('rn_unlocked');}catch(e){}
+function lockShow(){            // nobody is signed in
+  markSigned(false);
+  const was=lockEl('lockScreen').classList.contains('unlocked');
   lockEl('lockScreen').classList.remove('unlocked');
-  setTimeout(()=>lockEl('pw1').focus(),40);
+  document.querySelectorAll('.modal-wrap.open').forEach(m=>m.classList.remove('open'));
+  lockEl('lockGo').disabled=false;
+  if(was)lockSay('');
+  setTimeout(()=>lockEl(lockEl('lockEmail').value?'pw1':'lockEmail').focus(),40);
+}
+function lockOffline(){         // Firebase could not be loaded
+  if(!signedHere())lockSay('No internet connection. The first sign-in on this device needs one — reconnect and reload the page.');
+}
+function lockSubmit(){
+  const email=lockEl('lockEmail').value.trim(),pw=lockEl('pw1').value,btn=lockEl('lockGo');
+  if(!email||!pw){lockSay('Enter your email and password.');return;}
+  if(!cloudDb||!window.firebase||!firebase.auth){
+    lockSay(cloudStatus==='unavailable'?'No internet connection. Reconnect and reload the page.':'Still connecting — try again in a moment.');return;
+  }
+  const keep=lockEl('lockKeep').checked,P=firebase.auth.Auth.Persistence;
+  try{if(keep)localStorage.setItem(KEEP_KEY,'1');else localStorage.removeItem(KEEP_KEY);}catch(e){}
+  btn.disabled=true;lockSay('Signing in…');
+  firebase.auth().setPersistence(keep?P.LOCAL:P.SESSION)
+    .then(()=>firebase.auth().signInWithEmailAndPassword(email,pw))
+    .then(()=>{lockSay('');})                    // onAuthStateChanged opens the app
+    .catch(err=>{
+      const c=(err&&err.code)||'';
+      lockEl('pw1').value='';
+      lockSay(c==='auth/operation-not-allowed'?'Email/Password sign-in is not switched on in the Firebase console yet (SECURITY.md).':
+        c==='auth/too-many-requests'?'Too many attempts. Wait a few minutes and try again.':
+        c==='auth/network-request-failed'?'No connection. Check the internet and try again.':
+        c==='auth/invalid-email'?'That email address is not valid.':
+        c==='auth/user-disabled'?'This account has been disabled in the Firebase console.':
+        'Email or password is not correct.');
+    })
+    .then(()=>{btn.disabled=false;});
+}
+function lockForgot(){
+  const email=lockEl('lockEmail').value.trim();
+  if(!email){lockSay('Type your email above first, then press “Forgot password?”.');lockEl('lockEmail').focus();return;}
+  if(!cloudDb||!window.firebase||!firebase.auth){lockSay('No internet connection. Reconnect and reload the page.');return;}
+  firebase.auth().sendPasswordResetEmail(email).catch(()=>{}).then(()=>
+    lockSay('If that address has an account, a password-reset email is on its way.'));
+}
+function lockApp(){ // the toolbar padlock: sign out, which locks every window of the app
+  const online=!!(cloudDb&&window.firebase&&firebase.auth)&&navigator.onLine!==false;
+  if(!online&&!confirm('You are offline.\n\nIf you sign out now, the app cannot be opened again on this device until the internet is back.\n\nSign out anyway?'))return;
+  if(cloudDb&&window.firebase&&firebase.auth&&firebase.auth().currentUser)firebase.auth().signOut().catch(()=>lockShow());
+  else lockShow();
 }
 function lockInit(){
-  let unlocked=false;try{unlocked=sessionStorage.getItem('rn_unlocked')==='1';}catch(e){}
-  if(unlocked){lockEl('lockScreen').classList.add('unlocked');return;}
-  setTimeout(()=>lockEl('pw1').focus(),50);
+  lockEl('lockKeep').checked=keepHere();
+  if(signedHere()){lockEl('lockScreen').classList.add('unlocked');return;}
+  setTimeout(()=>lockEl('lockEmail').focus(),50);
 }
-lockEl('pw1').addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();lockSubmit();}});
+for(const id of ['lockEmail','pw1'])lockEl(id).addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();lockSubmit();}});
 
 /* ---------- change memory (history + undo) ---------- */
 // undo memory: the `undo` fields of PERSIST, deep-cloned (includes the manual-mode
@@ -2105,7 +2226,7 @@ function updateLockUI(){
 }
 
 // Which nurses are off their exact-7 count or over a week's split (4/3 · 3/4),
-// and which nights aren't covered by exactly two RNs — named, with a flag for
+// and which nights are off the N7 minimum — named, with a flag for
 // anyone on the night turn. The generator keeps every RN on their split, so what
 // this finds is almost always a hand edit: entries over the split, a Manual-mode
 // edit on a generated fortnight, or a night left short when nobody could backfill.
@@ -2123,8 +2244,12 @@ function conflictReport(off,sh){
     if(tot===7)continue;
     (tot>7?over:under).push({i,tot,onNight:nightSet.has(i)});
   }
+  // nights against the configured N7 minimum, not a fixed 2: short of that weekday's
+  // minimum, or over the night team (the highest N7 value — what the engine staffs)
+  const team=nightMinOf();
   for(let d=0;d<14;d++){let c=0;for(let i=0;i<N;i++)if(sh[i][d]==='N7')c++;
-    if(c<2)nightsShort.push({d,c});else if(c>2)nightsOver.push({d,c});}
+    const need=(DAILY_MIN[d%7]&&DAILY_MIN[d%7].N7)||0;
+    if(c<need)nightsShort.push({d,c,need});else if(c>team)nightsOver.push({d,c,need:team});}
   return {over,under,nightsShort,nightsOver,weekOver,nightSet};
 }
 // advisory fatigue checks (display-only). Returns nurses flagged by each rule:
@@ -2207,8 +2332,8 @@ function renderBanner(){
   // 3) nurses working more than 3 days in a row
   let longRuns=0;
   for(let i=0;i<N;i++)if(maxRunLen(sh[i],WORK_TYPES)>3)longRuns++;
-  // 4) nights not covered by exactly 2 RNs (nights are manual — you fill these)
-  const nightGaps=[...cr.nightsShort,...cr.nightsOver].map(x=>`${DAYS[x.d%7]} ${fmt(days[x.d])} (${x.c})`);
+  // 4) nights off the N7 minimum (below that weekday's minimum, or above the night team)
+  const nightGaps=[...cr.nightsShort,...cr.nightsOver].map(x=>`${DAYS[x.d%7]} ${fmt(days[x.d])}: ${x.c} of ${x.need}`);
   // 5) advisory fatigue rules (soft warnings — never rule-breaking)
   const ft=fatigueReport(days,sh);
   const fatigueParts=[];
@@ -2227,7 +2352,7 @@ function renderBanner(){
   const parts=[];
   if(weekOverMsg.length)parts.push(weekOverMsg.join(', '));
   if(blockedMsg)parts.push(`<b>night turn cancelled</b> for ${blockedMsg}`);
-  if(nightGaps.length)parts.push(`<b>${nightGaps.length}</b> night${nightGaps.length>1?'s':''} not covered by 2 RNs (${nightGaps.join(', ')})`);
+  if(nightGaps.length)parts.push(`<b>${nightGaps.length}</b> night${nightGaps.length>1?'s':''} off the N7 minimum (${nightGaps.join(', ')})`);
   if(short.length)parts.push(`<b>${short.length}</b> day${short.length>1?'s':''} below minimum staffing (${short.join(', ')})`);
   if(overNames.length)parts.push(`<b>${overNames.length}</b> over 7 shifts: ${overNames.join(', ')}`);
   if(underNames.length)parts.push(`<b>${underNames.length}</b> under 7 shifts: ${underNames.join(', ')}`);
@@ -3018,7 +3143,7 @@ function reqAdd(){
     if(meOver&&meOver.onNight)warn=`  ⚠ ${who.name} is on the night turn this fortnight — now ${meOver.tot} shifts. Saved; remove the request or fix the night cells by hand.`;
     else if(meUnder&&meUnder.onNight)warn=`  ⚠ ${who.name} is on the night turn and now has ${meUnder.tot} shifts — a night may be left short.`;
     else if(meOver)warn=`  ⚠ ${who.name} is now at ${meOver.tot} shifts.`;
-    else if(cr.nightsShort.length||cr.nightsOver.length)warn='  ⚠ A night is no longer covered by exactly 2 RNs — see the banner.';
+    else if(cr.nightsShort.length||cr.nightsOver.length)warn='  ⚠ A night is no longer at the N7 minimum — see the banner.';
   }
   msg.textContent=`Added ${n} — schedule updated.`+warn;
   msg.classList.toggle('req-warn',!!warn);
@@ -4106,7 +4231,7 @@ function downloadFairnessPDF(){
 loadState();
 syncN();ensureIds();ensureStaff();ensureFatigue();ensureNightList();ensureDailyMin();   // fresh installs (no saved state) still need stable ids + staff rows + night cycle
 applyTheme();
-lockInit(); // show the password gate (or auto-unlock if already unlocked this session)
+lockInit(); // show the sign-in screen (or open at once on a device that is signed in)
 // first ever open: anchor cycle 0 to this week's Monday and remember it
 if(!startDateStr){startDateStr=isoKey(getMonday(new Date()));}
 document.getElementById('startDate').value=startDateStr;
@@ -4114,7 +4239,7 @@ document.getElementById('startDate').value=startDateStr;
 cycleOffset=autoOffset(startDateStr);
 render();
 saveState();
-initCloud(); // connect to the shared cloud schedule if a unit code was saved
+initCloud(); // start Firebase; the signed-in account then opens the app and its cloud roster
 </script>
 </body>
 </html>

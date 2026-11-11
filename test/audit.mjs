@@ -6,8 +6,10 @@
  *
  * Loads index.html in headless Chromium and asserts the scheduling rules that
  * the app promises. Exits non-zero if any rule is broken, so CI catches
- * regressions. It unlocks the app by setting the session flag directly, so the
- * password never has to appear in this repo.
+ * regressions. It runs with the network blocked, so Firebase never loads and nothing
+ * here can reach the real project; the app opens the way it does on a signed-in
+ * device that is offline (the `rn_signed` marker). Signing in itself, the cloud roster
+ * and the security rules are covered by test/cloud.mjs in the Firebase emulators.
  */
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'url';
@@ -32,7 +34,8 @@ async function launch() {
 
 const browser = await launch();
 const ctx = await browser.newContext();
-await ctx.addInitScript(() => sessionStorage.setItem('rn_unlocked', '1'));
+await ctx.route(/^https?:\/\//, r => r.abort());            // offline on purpose: same result in CI and in a sandbox
+await ctx.addInitScript(() => sessionStorage.setItem('rn_signed', '1'));
 const page = await ctx.newPage();
 const pageErrors = [];
 page.on('pageerror', e => pageErrors.push(String(e)));
@@ -302,7 +305,7 @@ const edits = await page.evaluate(() => {
   const t = turnFor(0), n = t.nightA[0];
   edit(n, 2, 'D6');                                          // day duty for a night-turn nurse
   out.autoNight = wk(sched.sh[n], 0) === 4 && sched.sh[n][1] !== 'N7';
-  out.nightShortShown = document.getElementById('banner').textContent.includes('not covered by 2 RNs');
+  out.nightShortShown = /off the N7 minimum \([^)]*: 1 of 2/.test(document.getElementById('banner').textContent);
 
   gen();                                                     // Manual mode, generated fortnight
   [i, d] = pick(); const before = wk(sched.sh[i], 0);
@@ -760,19 +763,14 @@ check('undo restores every field', reg2.undoReverted === true);
 /* ---------------- 4c. staff requests window (the cloud side is test/cloud.mjs) ---------------- */
 const sreq = await page.evaluate(() => {
   const out = {};
-  // Firebase may or may not have loaded (CI has a network, a sandbox may not), so both
-  // states are forced here instead of assumed
   const shown = id => !document.getElementById(id).hidden;
-  const realDb = cloudDb, realFb = window.firebase;
-  cloudDb = null;                                   // no connection: the window must say so, not break
-  openStaffReq();
-  out.offlineMsg = shown('sreqOff') && !shown('sreqSignin') && !shown('sreqMain') && !shown('sreqBadge');
-  cloudDb = realDb || {};                           // connected, nobody signed in as manager
-  if (!realFb) window.firebase = { auth: () => ({}) };
+  openStaffReq();                                   // opened offline: the window must say so, not break
+  out.offlineMsg = mgrUser === null && shown('sreqOff') && !shown('sreqMain') && !shown('sreqBadge');
+  mgrUser = { uid: 'audit', email: 'manager@example.test' }; sreqState = 'ready';   // as when signed in, no link yet
   renderStaffReq();
-  out.signinMsg = mgrUser === null && !shown('sreqOff') && shown('sreqSignin') && !shown('sreqMain') &&
-    !shown('sreqSignoutBtn') && !shown('sreqBadge');
-  cloudDb = realDb; if (!realFb) delete window.firebase;
+  out.signedIn = !shown('sreqOff') && shown('sreqMain') && shown('sreqSetup') && !shown('sreqLinkBox') &&
+    document.getElementById('sreqWho').textContent.includes('manager@example.test');
+  mgrUser = null; sreqState = 'idle'; renderStaffReq();
   closeStaffReq();
   // what arrives from the link is untrusted: sreqClean keeps only the expected shape
   const stamp = { toMillis: () => 1794398400000 };
@@ -794,12 +792,75 @@ const sreq = await page.evaluate(() => {
 });
 console.log('\n--- staff requests window ---');
 check('without a connection the window explains itself', sreq.offlineMsg === true);
-check('connected but not signed in, it asks for the manager sign-in and shows nothing', sreq.signinMsg === true);
+check('signed in with no link yet, it offers to create one', sreq.signedIn === true);
 check('a received request is reduced to its expected shape', sreq.clean === true);
 check('consecutive days are labelled as a range', sreq.label === 'Tue 01 Dec – Thu 03 Dec, Sat 05 Dec 2026', sreq.label);
 check('malformed requests are dropped', sreq.rejects === true);
 check('oversized fields are cut to their limits', sreq.bounded === true);
 check('a request for someone no longer on the roster says so', sreq.gone === 'Old Name (no longer on the roster)', sreq.gone);
+
+/* ---------------- 4d. the banner checks nights against the N7 minimum (not a fixed 2) ---------------- */
+const nightMin = await page.evaluate(() => {
+  const out = {}, keep = JSON.stringify(DAILY_MIN);
+  manualMode = false; overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; lockedCycles = {}; genDone = {}; genPlan = {};
+  for (const n of [1, 2, 3]) {
+    DAILY_MIN.forEach(m => { m.N7 = n; });
+    let bad = 0, wrongCount = 0;
+    for (let off = 0; off < 6; off++) {
+      const sh = computeSchedule(off).sh, cr = conflictReport(off, sh);
+      bad += cr.nightsShort.length + cr.nightsOver.length;
+      for (let d = 0; d < 14; d++) if (sh.filter(r => r[d] === 'N7').length !== n) wrongCount++;
+    }
+    out['min' + n] = { bad, wrongCount };
+  }
+  // N7 minimum 3: take one nurse off a night, and put an extra one on another
+  DAILY_MIN.forEach(m => { m.N7 = 3; });
+  const sh = computeSchedule(0).sh.map(r => r.slice());
+  sh[sh.findIndex(r => r[0] === 'N7')][0] = 'OFF';
+  sh[sh.findIndex(r => r[5] !== 'N7')][5] = 'N7';
+  const cr = conflictReport(0, sh);
+  out.short = JSON.stringify(cr.nightsShort); out.over = JSON.stringify(cr.nightsOver);
+  // weekday minimums that differ: one team of 3 covers the fortnight, a 2-minimum night with 3 is fine
+  DAILY_MIN.forEach((m, i) => { m.N7 = i === 0 ? 3 : 2; });
+  const mixed = conflictReport(0, computeSchedule(0).sh);
+  out.mixed = mixed.nightsShort.length + mixed.nightsOver.length;
+  cycleOffset = 0; DAILY_MIN.forEach(m => { m.N7 = 3; }); render();
+  out.bannerQuiet = !/off the N7 minimum|not covered by 2/.test(document.getElementById('banner').textContent);
+  DAILY_MIN = JSON.parse(keep); render();
+  return out;
+});
+console.log('\n--- night minimum in the banner ---');
+for (const n of [1, 2, 3])
+  check(`N7 minimum ${n}: every night has ${n} and none is reported`, nightMin['min' + n].bad === 0 && nightMin['min' + n].wrongCount === 0, JSON.stringify(nightMin['min' + n]));
+check('a night below the minimum is reported with its count and the minimum', nightMin.short === '[{"d":0,"c":2,"need":3}]', nightMin.short);
+check('a night above the night team is reported', nightMin.over === '[{"d":5,"c":4,"need":3}]', nightMin.over);
+check('differing weekday minimums raise no false alarm', nightMin.mixed === 0, String(nightMin.mixed));
+check('the banner is quiet about nights at a minimum of 3', nightMin.bannerQuiet === true);
+
+/* ---------------- 4e. lock screen (signing in itself is test/cloud.mjs) ---------------- */
+const lctx = await browser.newContext();
+await lctx.route(/^https?:\/\//, r => r.abort());
+const lpage = await lctx.newPage();
+lpage.on('pageerror', e => pageErrors.push('lock screen: ' + e));
+await lpage.goto(APP);
+const isLocked = () => lpage.evaluate(() => !document.getElementById('lockScreen').classList.contains('unlocked'));
+check('a device that has not signed in opens locked', await isLocked());
+check('no shared password is left in the page', await lpage.evaluate(() => typeof hashPw === 'undefined' && typeof PW_HASH === 'undefined' &&
+  !document.documentElement.innerHTML.includes('PW_HASH') && document.getElementById('lockEmail') !== null));
+await lpage.click('#lockGo');
+check('an empty sign-in is stopped', /email and password/i.test(await lpage.textContent('#lockErr')) && await isLocked());
+await lpage.fill('#lockEmail', 'someone@example.test');
+await lpage.fill('#pw1', 'anything');
+await lpage.click('#lockGo');
+check('with no connection nothing unlocks it', await isLocked() && /connect/i.test(await lpage.textContent('#lockErr')));
+check('it says the first sign-in needs the internet',
+  await lpage.waitForFunction(() => /first sign-in on this device needs/.test(document.getElementById('lockErr').textContent), null, { timeout: 12000 }).then(() => true, () => false) && await isLocked());
+await lpage.evaluate(() => sessionStorage.setItem('rn_unlocked', '1'));
+await lpage.reload();
+check('the old unlock flag no longer opens the app', await isLocked());
+await lctx.close();
+const unlockedOffline = await page.evaluate(() => document.getElementById('lockScreen').classList.contains('unlocked') && cloudStatus === 'unavailable' && cloudAuth === 'off');
+check('a signed-in device stays open offline, working from its own storage', unlockedOffline === true);
 
 /* ---------------- 5. no runtime errors ---------------- */
 console.log('\n--- runtime ---');
