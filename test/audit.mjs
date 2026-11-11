@@ -527,16 +527,19 @@ const hist = await page.evaluate(() => {
     flags = {}; notes = {}; staffShifts = {}; history = []; manualMode = false; cycleOffset = 0; seed = 5150; render(); saveState(); };
   window.__c = window.confirm; window.confirm = () => true;
   const edit = (i, d, v) => { openCellM(i, d); mSel = v; saveCell(); };
+  // an edit that is ALWAYS a change: Generate uses a random seed, so a cell may already
+  // hold the value typed — then nothing changes and (correctly) no undo step is recorded
+  const change = (i, d, v, alt) => edit(i, d, sched.sh[i][d] === v ? alt : v);
 
   // (a) a varied run of actions, then undo all the way back — every step must match exactly
   reset();
   const steps = [state()];
   const acts = [
-    () => edit(3, 2, 'D6'), () => edit(3, 2, 'OFF'), () => { setMode(true); generateFortnight(); },
-    () => edit(5, 4, 'S9'), () => toggleCycleLock(), () => toggleCycleLock(),
+    () => change(3, 2, 'D6', 'D7'), () => change(3, 2, 'OFF', 'S8'), () => { setMode(true); generateFortnight(); },
+    () => change(5, 4, 'S9', 'S8'), () => toggleCycleLock(), () => toggleCycleLock(),
     () => { openRequests(); document.getElementById('reqRn').value = String(order[2]); document.getElementById('reqType').value = 'VAC';
             reqSelDays = new Set([8, 9]); document.getElementById('reqReason').value = 'why'; reqAdd(); closeRequests(); },
-    () => setHolBal(1, 9), () => moveInOrder(0, 4), () => removeRN(order[order.length - 1]),
+    () => setHolBal(1, holBal[1] === 9 ? 8 : 9), () => moveInOrder(0, 4), () => removeRN(order[order.length - 1]),
     () => { cycleOffset = 1; render(); generateFortnight(); }, () => clearCycle()
   ];
   for (const a of acts) { a(); steps.push(state()); }
@@ -567,7 +570,7 @@ const hist = await page.evaluate(() => {
 
   // (c) history written by the previous version (full snapshots) is converted and still undoes exactly
   reset();
-  const s0 = state(); const b1 = snapshot(); edit(2, 1, 'D7'); const s1 = state(); const b2 = snapshot(); edit(4, 3, 'S8');
+  const s0 = state(); const b1 = snapshot(); change(2, 1, 'D7', 'D6'); const s1 = state(); const b2 = snapshot(); change(4, 3, 'S8', 'S9');
   const old = JSON.parse(localStorage.getItem(STORE_KEY));
   old.history = [{ t: 1, label: 'old 1', snap: b1 }, { t: 2, label: 'old 2', snap: b2 }];      // old format: no deltas
   localStorage.setItem(STORE_KEY, JSON.stringify(old));
@@ -585,13 +588,13 @@ const hist = await page.evaluate(() => {
   out.warnClears = saveFailed === false && document.getElementById('saveWarn').hidden === true;
 
   // (e) nearly-full storage: the oldest undo steps go first, the data is still saved
-  reset(); for (let q = 0; q < 12; q++) edit(q, 5, 'D6');
+  reset(); for (let q = 0; q < 12; q++) change(q, 5, 'D6', 'D7');
   const need = JSON.stringify(Object.assign(JSON.parse(localStorage.getItem(STORE_KEY)), { history: [] })).length;
   Storage.prototype.setItem = function (k, v) { if (k === STORE_KEY && v.length > need + 1200) throw new DOMException('full', 'QuotaExceededError'); return realSet.call(this, k, v); };
-  edit(0, 6, 'S9');
+  const last = sched.sh[0][6] === 'S9' ? 'S8' : 'S9'; edit(0, 6, last);
   Storage.prototype.setItem = realSet;
   const kept = JSON.parse(localStorage.getItem(STORE_KEY));
-  out.trimsHistoryFirst = !saveFailed && kept.history.length < 13 && kept.overrides[isoKey(sched.days[6])][rid(0)] === 'S9' && history.length === kept.history.length;
+  out.trimsHistoryFirst = !saveFailed && kept.history.length < 13 && kept.overrides[isoKey(sched.days[6])][rid(0)] === last && history.length === kept.history.length;
 
   window.confirm = window.__c; reset();
   return out;
