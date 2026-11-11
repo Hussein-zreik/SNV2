@@ -862,6 +862,64 @@ await lctx.close();
 const unlockedOffline = await page.evaluate(() => document.getElementById('lockScreen').classList.contains('unlocked') && cloudStatus === 'unavailable' && cloudAuth === 'off');
 check('a signed-in device stays open offline, working from its own storage', unlockedOffline === true);
 
+/* ---------------- 4f. merging two devices' changes (the sync itself is test/cloud.mjs) ---------------- */
+const mrg = await page.evaluate(() => {
+  const out = {}, c = x => JSON.parse(JSON.stringify(x));
+  const base = { ids: ['a', 'b', 'c'], names: ['A', 'B', 'C'], groups: ['A', 'B', 'A'], holBal: [14, 14, 14], vacBal: [21, 21, 21], order: [0, 1, 2],
+    overrides: { '2031-01-06': { a: 'VAC' }, '2031-01-07': { b: 'HOL' } },
+    frozen: { '2031-01-06': { a: Array(14).fill('OFF'), b: Array(14).fill('OFF') } },
+    notes: {}, defHol: 14, nightList: ['a', 'b'] };
+  const run = (fm, ft) => { const m = c(base), t = c(base); fm(m); ft(t); const r = mergeState(c(base), m, t); return { s: r.state, n: r.clashes.length, txt: r.clashes.map(clashText) }; };
+  // different things: everything is kept, nothing is reported
+  let r = run(m => { m.overrides['2031-01-06'].b = 'SL'; m.overrides['2031-01-08'] = { a: 'REQ' }; m.frozen['2031-01-06'].a[2] = 'D6'; m.names[0] = 'Ann'; m.defHol = 15; },
+              t => { t.overrides['2031-01-06'].c = 'HOL'; t.overrides['2031-01-08'] = { c: 'REQ' }; t.frozen['2031-01-06'].a[9] = 'N7'; t.holBal[2] = 10; delete t.overrides['2031-01-07']; });
+  out.disjoint = r.n === 0 && JSON.stringify(r.s.overrides) === JSON.stringify({ '2031-01-06': { a: 'VAC', b: 'SL', c: 'HOL' }, '2031-01-08': { a: 'REQ', c: 'REQ' } }) &&
+    r.s.frozen['2031-01-06'].a[2] === 'D6' && r.s.frozen['2031-01-06'].a[9] === 'N7' && r.s.names[0] === 'Ann' && r.s.holBal[2] === 10 && r.s.defHol === 15;
+  // the same cell, differently: the saving device ("mine") wins and the clash is named
+  r = run(m => { m.overrides['2031-01-06'].a = 'SL'; m.frozen['2031-01-06'].b[0] = 'D7'; }, t => { t.overrides['2031-01-06'].a = 'HOL'; t.frozen['2031-01-06'].b[0] = 'S9'; });
+  out.clash = r.n === 2 && r.s.overrides['2031-01-06'].a === 'SL' && r.s.frozen['2031-01-06'].b[0] === 'D7';
+  out.clashTxt = r.txt.join(' | ');
+  // one side deleted what the other changed; both made the same change
+  r = run(m => { delete m.overrides['2031-01-06'].a; }, t => { t.overrides['2031-01-06'].a = 'HOL'; });
+  out.deleteWins = r.n === 1 && !('a' in (r.s.overrides['2031-01-06'] || {}));
+  r = run(m => { m.overrides['2031-01-07'].b = 'SL'; }, t => { t.overrides['2031-01-07'].b = 'SL'; });
+  out.sameChange = r.n === 0 && r.s.overrides['2031-01-07'].b === 'SL';
+  // an RN added on the other device while this one renamed: the roster arrays stay in step
+  const add = t => { t.ids.push('d'); t.names.push('D'); t.groups.push('B'); t.holBal.push(14); t.vacBal.push(21); t.order.push(3); };
+  r = run(m => { m.names[1] = 'Bea'; m.overrides['2031-01-07'].a = 'SL'; }, add);
+  const lens = k => r.s[k].length;
+  out.rosterTheirs = ['ids', 'names', 'groups', 'holBal', 'vacBal', 'order'].every(k => lens(k) === 4) && r.s.names[1] === 'B' && r.n === 1 && /roster list/.test(r.txt[0]) && r.s.overrides['2031-01-07'].a === 'SL';
+  r = run(add, t => { t.vacBal[0] = 5; });
+  out.rosterMine = ['ids', 'names', 'groups', 'holBal', 'vacBal', 'order'].every(k => r.s[k].length === 4) && r.s.vacBal[0] === 21 && r.n === 1;
+  r = run(add, t => { t.overrides['2031-01-06'].c = 'HOL'; });
+  out.rosterQuiet = r.n === 0 && r.s.names.length === 4 && r.s.overrides['2031-01-06'].c === 'HOL';
+  // lists that are not cell rows are taken whole
+  r = run(m => { m.nightList = ['a']; }, t => { t.nightList = ['a', 'b', 'c']; });
+  out.listWhole = r.n === 1 && JSON.stringify(r.s.nightList) === '["a"]';
+  // the clash log read back from the cloud is cut to shape
+  const log = cleanClashLog([{ id: 3, by: 'x', at: 1, n: 99, items: ['<img src=x onerror=alert(1)>', 7, 'y'.repeat(500)] }, { id: 'no' }, null, { id: 4, items: 'nope' }]);
+  out.logClean = log.length === 1 && log[0].items.length === 2 && log[0].items[1].length === 140;
+  noteClash(log[0], false);
+  out.noteSafe = !document.getElementById('syncNote').hidden && document.querySelectorAll('#syncNote img').length === 0 &&
+    document.getElementById('syncNoteBody').textContent.includes('<img src=x') && /and 97 more/.test(document.getElementById('syncNoteBody').textContent);
+  dismissSyncNote();
+  out.dismissed = document.getElementById('syncNote').hidden && document.getElementById('syncNoteBody').textContent === '';
+  out.keyOrder = stable({ b: 1, a: { d: 1, c: 2 } }) === stable({ a: { c: 2, d: 1 }, b: 1 });
+  return out;
+});
+console.log('\n--- merging two devices ---');
+check('changes to different cells, days and settings are all kept', mrg.disjoint === true);
+check('the same cell changed on both: the saving device wins, each clash is recorded', mrg.clash === true);
+check('a clash reads as "what was there → what was kept"', /HOL → SL/.test(mrg.clashTxt) && /S9 → D7/.test(mrg.clashTxt), mrg.clashTxt);
+check('deleting on the saving device beats a change on the other', mrg.deleteWins === true);
+check('the same change on both devices is not a clash', mrg.sameChange === true);
+check('an RN added elsewhere while renaming here: roster lists stay aligned, the rename is reported', mrg.rosterTheirs === true);
+check('an RN added here while balances changed elsewhere: this roster is kept whole', mrg.rosterMine === true);
+check('an RN added here and a request added elsewhere merge quietly', mrg.rosterQuiet === true);
+check('other lists are taken whole, never stitched', mrg.listWhole === true);
+check('the clash log from the cloud is cut to shape and shown as text', mrg.logClean === true && mrg.noteSafe === true && mrg.dismissed === true);
+check('comparing rosters ignores key order', mrg.keyOrder === true);
+
 /* ---------------- 5. no runtime errors ---------------- */
 console.log('\n--- runtime ---');
 check('no page errors', pageErrors.length === 0, pageErrors.join(' | '));

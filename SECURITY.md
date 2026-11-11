@@ -75,10 +75,16 @@ Be aware of the limits:
 - **Offline.** With *Keep me signed in*, the app opens without internet and works from
   the device's copy; the changes are sent to your account the next time it opens
   online. A device that has never signed in cannot be opened offline.
-- **Two devices editing at the same moment** still overwrite each other (the last
-  save wins). Edit from one device at a time.
+- **Two devices editing at the same time.** Changes to different cells, days or
+  settings are all kept. If both changed the *same* cell before either had synced,
+  the one saved last stays, and both devices show a notice naming the cell and the
+  two values; the device whose change was replaced can bring it back with Undo.
 - **One account.** Colleagues with their own accounts, or view-only access, are not
   built yet.
+
+> **The rules file changes with the app.** Whenever `firestore.rules` is updated,
+> publish it again (step 4). If the app is newer than the published rules, **Cloud**
+> shows *Cloud error* and keeps your changes on the device until you do.
 
 `npm run test:cloud` runs the rules in the Firebase emulator (who may do what, then
 the real pages end to end). That proves the rules file. Only the **Cloud** window's

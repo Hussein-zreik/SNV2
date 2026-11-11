@@ -15,8 +15,8 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
 npm run test:unit      # 53 engine unit tests in plain Node, ~0.5s
-npm test               # 133 checks driving the app in headless Chromium, ~50s
-npm run test:cloud     # 147 checks of firestore.rules, sign-in, roster sync + the staff link, in the
+npm test               # 144 checks driving the app in headless Chromium, ~50s
+npm run test:cloud     # 166 checks of firestore.rules, sign-in, roster sync + the staff link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
 
@@ -78,8 +78,9 @@ single inline `<script>`. Splitting it has been considered and rejected. Two con
 
 `engine.test.mjs` is the fast net over scheduling rules. `audit.mjs` drives the real app
 in Chromium and covers what the engine cannot: persistence, the state registry, undo,
-import/export, and "no page errors". `cloud.mjs` covers what needs a database: the
-security rules caller by caller, and the staff request link through both pages.
+import/export, the merge function, and "no page errors". `cloud.mjs` covers what needs a
+database: the security rules caller by caller, sign-in, two devices syncing and clashing,
+and the staff request link through both pages.
 
 ## The three ideas you need before changing anything
 
@@ -261,18 +262,34 @@ There is no shared password and no anonymous sign-in; do not reintroduce either.
   localStorage with *Keep me signed in*) opens at once and **also offline**; if
   Firebase then reports no session, it locks again. That marker is not a security
   boundary and must never gate anything the rules do not also gate.
-- **Roster location:** `rosters/{uid}` = `{state, updatedAt}`, readable and writable
-  only by that account. `schedules/{unitCode}` is legacy: no writes; a manager may
-  `get` it once (`seedRoster()` takes it over when the account has no roster yet and
-  the device still remembers `rn_unit`) and delete it from the Cloud window
+- **Roster location:** `rosters/{uid}` = `{state, updatedAt, rev, clashes}`, readable
+  and writable only by that account. `schedules/{unitCode}` is legacy: no writes; a
+  manager may `get` it once (`seedRoster()` takes it over when the account has no roster
+  yet and the device still remembers `rn_unit`) and delete it from the Cloud window
   (`legacyCheck/Use/Delete`).
-- **Who wins on connect** (`connectRoster`): first time a device meets an account →
-  the account's roster, with the device's previous state kept as an undo step.
-  Afterwards → the account's roster, **unless** the device changed since it last
-  agreed with the account (`stateSig()` vs `rn_synced`, i.e. edits made offline): then
-  the device's roster is pushed. Simultaneous edits are still last-write-wins (C4).
+- **Every save is a versioned transaction** (`pushCloud`): read the document, merge,
+  write with `rev+1`. The rules refuse any other `rev`, so no client — including an
+  out-of-date copy of the app — can write over a roster it has not read. Never go back
+  to a plain `.set()`.
+- **Three-way merge** (`mergeState(base, mine, theirs)`). `base` is the roster as it
+  was when this device and the account last agreed (`syncBaseStr`, kept in `rn_base`).
+  A change on one side only is kept. Where both changed the same thing, **the device
+  saving now wins** (the manager chose "last saved wins + notice"); the clash goes into
+  the document's `clashes` log (last 5) and every device shows it in the `#syncNote`
+  banner until dismissed. Objects merge key by key; a flat array of equal length (a
+  nurse's 14 cells) element by element; any other array is taken whole. The parallel
+  roster arrays (`ROSTER_KEYS`) always come from one side when RNs were added or removed.
+- **When the account's roster arrives** (`onRemote`): first time on a device → take it,
+  keeping the device's previous state as an undo step. Device has unsent changes
+  (`localAhead()`, e.g. made offline) → save, which merges. Otherwise → take it.
+  Compare rosters with `stable()` (key order differs between devices), and after taking
+  a roster set the base to what the device now shows — loading can tidy a state, and
+  treating that as an edit would make two devices send each other the same roster forever.
 - **`adoptCloudState()`** is the one place a cloud roster is applied; it also saves it
   to the device (`saveState()` skips the cloud while `applyingRemote`).
+- **No save before the first read:** `cloudSave`/`pushCloud` do nothing until
+  `rosterReady`. Offline, a save fails, the status reads "Not sent yet", and it is
+  retried on a timer and on the browser's `online` event.
 - **`probeRules()`** asks for a roster that is not ours. Refused → `cloudSecure=true`;
   answered → the Cloud window says the database is NOT secured. This is how the app
   can tell whether the rules were published; never replace it with an assumption.

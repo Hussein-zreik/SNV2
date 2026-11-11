@@ -39,10 +39,22 @@ service cloud.firestore {
 
     // ---------- roster sync ----------
     match /rosters/{uid} {
+      // Every save carries rev = the rev it read + 1, so a device can never write over
+      // a roster it has not seen (two devices editing at once: the app re-reads, merges
+      // and tries again). clashes is the short log of what such a merge had to choose.
+      function validRoster(d) {
+        return d.keys().hasOnly(['state', 'updatedAt', 'rev', 'clashes'])
+          && d.state is map
+          && d.rev is int
+          && (!('clashes' in d) || (d.clashes is list && d.clashes.size() <= 5));
+      }
       allow read, delete: if isManager() && request.auth.uid == uid;
-      allow create, update: if isManager() && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(['state', 'updatedAt'])
-        && request.resource.data.state is map;
+      allow create: if isManager() && request.auth.uid == uid
+        && validRoster(request.resource.data)
+        && request.resource.data.rev == 1;
+      allow update: if isManager() && request.auth.uid == uid
+        && validRoster(request.resource.data)
+        && request.resource.data.rev == resource.data.get('rev', 0) + 1;
     }
 
     // ---------- legacy: the roster shared by unit code ----------

@@ -155,6 +155,8 @@ input[type=date]:focus{border-color:var(--border-3)}
 .gp-shift{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);cursor:pointer}
 .gp-shift .gp-sub{color:var(--muted-2);font-size:var(--fs-xs)}
 .banner[hidden]{display:none}
+#syncNote ul{margin:4px 0 4px 18px;padding:0;font-family:var(--font-mono);font-size:var(--fs-xs)}
+#syncNote .bhint{font-size:var(--fs-xs)}
 .banner.bad{background:var(--hol-bg);border-color:var(--hol-bd);color:var(--hol-fg)}
 /* "whose turn this cycle" info panel */
 .cyc-info{border:1px solid var(--border);border-radius:var(--r-lg);background:var(--panel);margin-bottom:var(--sp-5);overflow:hidden}
@@ -665,6 +667,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 <div class="summary-row" id="sumBar"></div>
 
 <div class="banner bad" id="saveWarn" role="alert" hidden><span class="bic">⚠</span><div><b>Changes are not being saved on this device.</b> The browser's storage is full or blocked. Your work is still on screen: open <b>Settings → Roster &amp; data → Export backup</b> now, before closing or reloading this page.</div></div>
+<div class="banner warn" id="syncNote" role="status" hidden><span class="bic">⇄</span><div id="syncNoteBody" style="flex:1"></div><button class="btn sm" onclick="dismissSyncNote()">Dismiss</button></div>
 <div class="banner ok" id="banner"></div>
 
 <div class="cyc-info" id="cycInfoSection">
@@ -1503,16 +1506,111 @@ function initCloud(){
 }
 function sanitizeCode(c){return String(c||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');}
 function rosterRef(){return cloudDb.collection('rosters').doc(cloudUid);}
-// A fingerprint of the roster as it was when this device and the account last agreed.
-// If the roster on the device no longer matches it, the device holds edits the account
-// has not seen (made offline) — those are sent up instead of being overwritten.
-function stateSig(){
-  const t=JSON.stringify(cloudStateObj());let h=5381;
-  for(let i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;
-  return t.length+':'+(h>>>0).toString(36);
+/* ---- two devices, one roster: versioned saves and a three-way merge (audit C4) ---- */
+// `syncBaseStr` is the roster as it was when this device and the account last agreed.
+// Every save is a transaction: read what the account holds now, merge the three
+// (base, mine, theirs) and write it back with rev+1 — the rules refuse any other rev,
+// so nothing can overwrite a roster it has not read. In the merge a change made on
+// only one side is kept; where both sides changed the same thing, this save — the
+// later one — wins, and the clash is logged in the document so every device says so.
+const stable=v=>JSON.stringify(v,(k,x)=>isObj(x)?Object.keys(x).sort().reduce((o,key)=>{o[key]=x[key];return o;},{}):x);
+const mineStr=()=>stable(cloudStateObj());
+const DEVICE_ID=(()=>{try{let d=localStorage.getItem('rn_device');if(!d){d=newId();localStorage.setItem('rn_device',d);}return d;}catch(e){return newId();}})();
+let syncBaseStr=null,rosterReady=false,pushing=false,pushAgain=false,pendingRemote=null,retryTimer=null;
+function rosterKnown(uid){try{return localStorage.getItem('rn_roster_uid')===uid;}catch(e){return false;}}
+function loadBase(uid){syncBaseStr=null;try{if(rosterKnown(uid))syncBaseStr=localStorage.getItem('rn_base');}catch(e){}}
+function setBase(state,uid){
+  syncBaseStr=stable(state);
+  try{localStorage.setItem('rn_roster_uid',uid);}catch(e){}
+  try{localStorage.setItem('rn_base',syncBaseStr);}
+  catch(e){try{localStorage.removeItem('rn_base');}catch(e2){}}   // no room: kept in memory for this visit
 }
-function markSynced(sig){try{localStorage.setItem('rn_synced',sig||stateSig());}catch(e){}}
-function localAhead(){try{const v=localStorage.getItem('rn_synced');return !!v&&v!==stateSig();}catch(e){return false;}}
+// does this device hold changes the account has not seen (e.g. made offline)?
+function localAhead(){return syncBaseStr!==null&&mineStr()!==syncBaseStr;}
+function merge3(b,m,t,path,out){
+  const sm=stable(m),st=stable(t);
+  if(sm===st)return m;
+  const sb=stable(b);
+  if(sm===sb){out.took=true;return t;}            // only the other side changed it
+  if(st===sb)return m;                             // only this side changed it
+  if(isObj(m)&&isObj(t)&&(isObj(b)||b===undefined)){   // both changed inside it: go deeper
+    const B=b||{},r={};
+    for(const k of new Set([...Object.keys(m),...Object.keys(t)])){
+      const v=merge3(B[k],m[k],t[k],path.concat(k),out);if(v!==undefined)r[k]=v;}
+    return r;
+  }
+  const flat=a=>Array.isArray(a)&&a.every(x=>x===null||typeof x!=='object');
+  if(flat(b)&&flat(m)&&flat(t)&&b.length===m.length&&m.length===t.length)   // e.g. a nurse's 14 cells
+    return m.map((x,i)=>merge3(b[i],x,t[i],path.concat(i),out));
+  out.clashes.push({path,kept:m,dropped:t});       // the same thing, changed differently: this save wins
+  return m;
+}
+// names/groups/balances/ids/order run in parallel: after RNs were added or removed on
+// one side they must all come from that side, never be stitched together
+const ROSTER_KEYS=['names','groups','holBal','vacBal','ids','order'];
+function mergeState(base,mine,theirs){
+  const out={clashes:[],took:false};
+  const state=merge3(base,mine,theirs,[],out);
+  const bI=stable(base.ids),mI=stable(mine.ids),tI=stable(theirs.ids);
+  if(mI!==tI){
+    const src=mI!==bI?mine:theirs,other=src===mine?theirs:mine;
+    const touched=ROSTER_KEYS.some(k=>stable(other[k])!==stable(base[k]));
+    for(const k of ROSTER_KEYS){if(src[k]===undefined)delete state[k];else state[k]=clone(src[k]);}
+    if(src===theirs)out.took=true;
+    out.clashes=out.clashes.filter(c=>!ROSTER_KEYS.includes(c.path[0]));
+    if(touched)out.clashes.push({path:['roster']});
+  }
+  return {state,clashes:out.clashes,took:out.took};
+}
+// one clash in the manager's words: "Mon 16 Nov · RN 3: VAC → SL" (what was there → what was kept)
+function clashText(c){
+  const p=c.path,k=p[0];
+  const v=x=>x===undefined?'empty':['string','number','boolean'].includes(typeof x)?String(x):'changed';
+  const who=id=>{const i=idxOfId(id);if(i>=0)return names[i];const q=staff.find(x=>x.id===id);return q?q.name:'someone no longer on the roster';};
+  const day=(iso,plus)=>{const d=new Date(iso+'T00:00:00');if(isNaN(d))return String(iso);d.setDate(d.getDate()+(plus||0));return `${DAYS[(d.getDay()+6)%7]} ${fmt(d)}`;};
+  const chg=`${v(c.dropped)} → ${v(c.kept)}`;
+  let t;
+  if((k==='overrides'||k==='staffShifts')&&p.length===3)t=`${day(p[1])} · ${who(p[2])}: ${chg}`;
+  else if(k==='notes'&&p.length===3)t=`${day(p[1])} · ${who(p[2])}: comment`;
+  else if(k==='flags'&&p.length===3)t=`${day(p[1])} · ${who(p[2])}: flag`;
+  else if(k==='frozen'&&p.length===4)t=`${day(p[1],+p[3])} · ${who(p[2])}: ${chg}`;
+  else if(k==='lockedCycles')t=`fortnight starting ${day(p[1])}: lock`;
+  else if(['frozen','genPlan','genDone','committedCycles','cycleSeeds'].includes(k))t=`fortnight starting ${day(p[1])}: generated roster`;
+  else if(k==='names'&&p.length===2)t=`RN name: ${chg}`;
+  else if(['groups','holBal','vacBal'].includes(k)&&p.length===2)t=`${names[p[1]]||'RN'}: ${k==='groups'?'group':k==='holBal'?'holiday balance':'vacation balance'} ${chg}`;
+  else if(k==='roster')t='roster list: RNs were added or removed on one device while the list was edited on the other';
+  else t=`setting “${String(k)}”`;
+  return t.slice(0,140);
+}
+// the clash log kept in the document: last 5 saves that had one. Untrusted like the rest.
+function cleanClashLog(a){
+  return (Array.isArray(a)?a:[]).filter(e=>isObj(e)&&Number.isInteger(e.id)&&Array.isArray(e.items)).slice(-5)
+    .map(e=>({id:e.id,by:String(e.by||'').slice(0,40),at:numOr(e.at,0,0,8.64e15),n:Math.round(numOr(e.n,0,0,9999)),
+      items:e.items.filter(x=>typeof x==='string').slice(0,12).map(x=>x.slice(0,140))}));
+}
+function clashSeen(uid){try{const v=(localStorage.getItem('rn_clash_seen')||'').split(':');return v[0]===uid?+v[1]||0:0;}catch(e){return 0;}}
+function markClashSeen(uid,rev){try{if(rev>clashSeen(uid))localStorage.setItem('rn_clash_seen',uid+':'+rev);}catch(e){}}
+// say it where it cannot be missed: a banner that stays until dismissed
+function noteClash(entry,mine){
+  const box=document.getElementById('syncNote'),body=document.getElementById('syncNoteBody');if(!box||!body)return;
+  const b=document.createElement('b');
+  b.textContent=mine?'Another device had changed the same thing just before this one saved. Your version was kept:'
+                    :'Another device saved over a change that was made at the same time. Its version was kept:';
+  const ul=document.createElement('ul');
+  for(const it of entry.items){const li=document.createElement('li');li.textContent=it;ul.appendChild(li);}
+  if(entry.n>entry.items.length){const li=document.createElement('li');li.textContent=`…and ${entry.n-entry.items.length} more`;ul.appendChild(li);}
+  const wrap=document.createElement('div');wrap.appendChild(b);wrap.appendChild(ul);
+  const tail=document.createElement('span');tail.className='bhint';
+  tail.textContent=mine?'Shown as “what the other device had → what is saved now”.':'Shown as “what was here → what is saved now”. Use Undo to bring yours back.';
+  wrap.appendChild(tail);body.appendChild(wrap);
+  box.hidden=false;
+}
+function dismissSyncNote(){const box=document.getElementById('syncNote');if(box){box.hidden=true;document.getElementById('syncNoteBody').textContent='';}}
+function showClashes(uid,log){
+  const seen=clashSeen(uid),fresh=cleanClashLog(log).filter(e=>e.id>seen&&e.by!==DEVICE_ID);
+  for(const e of fresh)noteClash(e,false);
+  return fresh.length;
+}
 // put a roster that came from the cloud on screen and in this device's storage.
 // `label` records what was here before as an undo step (first load on a device, or
 // taking over the old shared copy) so nothing local is lost without a way back.
@@ -1529,37 +1627,52 @@ function adoptCloudState(state,label){
 }
 function connectRoster(uid){
   if(cloudUnsub){cloudUnsub();cloudUnsub=null;}
-  clearTimeout(pushTimer);pushTimer=null;cloudSeeding=false;cloudSecure=null;
+  clearTimeout(pushTimer);pushTimer=null;clearTimeout(retryTimer);
+  cloudSeeding=false;cloudSecure=null;rosterReady=false;pushing=false;pushAgain=false;pendingRemote=null;
   cloudUid=uid||'';
   if(!cloudUid||!cloudDb){cloudStatus=cloudDb?'off':'unavailable';updateCloudUI();return;}
+  loadBase(uid);
   cloudStatus='connecting';updateCloudUI();
-  let seenKey='';try{seenKey=localStorage.getItem('rn_roster_uid')||'';}catch(e){}
-  let first=seenKey!==uid;                      // first time this device meets this account's roster
   cloudUnsub=rosterRef().onSnapshot(snap=>{
-    if(uid!==cloudUid||snap.metadata.hasPendingWrites)return;   // stale listener, or our own local echo
-    if(!snap.exists){seedRoster(uid);return;}                   // nothing in the account yet
-    const data=snap.data();
-    if(data&&isObj(data.state)&&!pushTimer){ // skip while we have unpushed local edits (keep ours)
-      if(JSON.stringify(data.state)!==JSON.stringify(cloudStateObj())){ // only if actually different
-        if(!first&&localAhead()){               // edits made while offline: send them, don't lose them
-          pushCloud();toast('Changes made offline were sent to your account');return;
-        }
-        adoptCloudState(data.state,first?'Before loading the roster from your account':'');
-        toast(first?'Roster loaded from your account':'Schedule updated from cloud');
-      }
-      markSynced();
-    }
-    if(first){first=false;try{localStorage.setItem('rn_roster_uid',uid);}catch(e){}}
-    cloudStatus='synced';updateCloudUI();
+    if(uid!==cloudUid)return;                                   // a listener from an earlier sign-in
+    if(!snap.exists){if(!pushing)seedRoster(uid);return;}       // nothing in the account yet
+    const d=snap.data();
+    if(!d||!isObj(d.state))return;
+    if(pushing){pendingRemote=d;return;}                        // a save is in flight: look again when it lands
+    onRemote(uid,d);
   },err=>{ console.error('cloud sync error',err); if(uid===cloudUid){cloudStatus='error'; updateCloudUI();} });
   probeRules(uid);
+}
+// the account's roster arrived (first load, or another device saved)
+function onRemote(uid,d){
+  const theirs=d.state,rev=Number.isInteger(d.rev)?d.rev:0;
+  const same=stable(theirs)===mineStr();
+  if(!rosterKnown(uid)){                         // first time this device meets this account's roster
+    if(!same){adoptCloudState(theirs,'Before loading the roster from your account');toast('Roster loaded from your account');}
+    setBase(cloudStateObj(),uid);markClashSeen(uid,rev);
+  }else if(same){
+    setBase(theirs,uid);
+  }else if(localAhead()||pushTimer){             // this device has changes of its own: save merges the two
+    rosterReady=true;
+    if(!pushTimer)pushCloud();
+    return;
+  }else{                                         // nothing unsent here: take the account's roster
+    const clashed=cleanClashLog(d.clashes).some(e=>e.id>clashSeen(uid)&&e.by!==DEVICE_ID);
+    adoptCloudState(theirs,clashed?'Before another device saved over a change made here':'');
+    // what is on screen now is the agreed roster (loading may tidy it; that is not an
+    // edit, or two devices could keep sending each other the same roster)
+    setBase(cloudStateObj(),uid);
+    toast('Schedule updated from cloud');
+  }
+  showClashes(uid,d.clashes);markClashSeen(uid,rev);
+  rosterReady=true;cloudStatus='synced';updateCloudUI();
 }
 // The account has no roster yet. If this device still remembers a unit code and a
 // roster is stored under it, that shared copy is the latest truth: take it over.
 // Otherwise the roster on this device becomes the account's roster.
 function seedRoster(uid){
   if(cloudSeeding)return;cloudSeeding=true;
-  const done=()=>{cloudSeeding=false;if(uid===cloudUid)pushCloud();};
+  const done=()=>{cloudSeeding=false;if(uid===cloudUid){rosterReady=true;pushCloud();}};
   const code=legacyCode();
   if(!code){done();return;}
   cloudDb.collection('schedules').doc(code).get().then(s=>{
@@ -1581,24 +1694,63 @@ function probeRules(uid){
     .catch(err=>{if(uid===cloudUid){cloudSecure=(err&&err.code)==='permission-denied'?true:null;updateCloudUI();}});
 }
 function cloudSave(){ // called from saveState; debounced push
-  if(applyingRemote||!cloudUid||!cloudDb)return;
+  // not before the account's roster has been seen once: a device must never save
+  // over a roster it has not read
+  if(applyingRemote||!cloudUid||!cloudDb||!rosterReady)return;
   clearTimeout(pushTimer);
   pushTimer=setTimeout(pushCloud,600);
 }
 function pushCloud(){
-  pushTimer=null; // clear the pending-push flag; if left set, the snapshot guard
-                  // (`!pushTimer`) stayed false forever and this device
-                  // stopped accepting ANY remote update after its first edit.
-  if(!cloudUid||!cloudDb)return;
-  const uid=cloudUid,sig=stateSig();
-  rosterRef().set({state:cloudStateObj(),updatedAt:Date.now()})
-    .then(()=>{if(uid===cloudUid){markSynced(sig);cloudStatus='synced';updateCloudUI();}})
-    .catch(e=>{console.error('cloud push failed',e);if(uid===cloudUid){cloudStatus='error';updateCloudUI();}});
+  clearTimeout(pushTimer);pushTimer=null;
+  if(!cloudUid||!cloudDb||!rosterReady)return;
+  if(pushing){pushAgain=true;return;}            // one save at a time; the next one picks up the rest
+  pushing=true;pushAgain=false;clearTimeout(retryTimer);
+  const uid=cloudUid,ref=rosterRef(),mine=clone(cloudStateObj()),myStr=stable(mine);
+  const base=syncBaseStr===null?null:JSON.parse(syncBaseStr);
+  // the transaction body may run more than once: it only computes, nothing on screen changes here
+  cloudDb.runTransaction(tx=>tx.get(ref).then(snap=>{
+    const d=snap.exists?snap.data():null,theirs=d&&isObj(d.state)?d.state:null;
+    let state=mine,clashes=[];
+    if(theirs&&base&&stable(theirs)!==syncBaseStr){const m=mergeState(base,mine,theirs);state=m.state;clashes=m.clashes;}
+    const rev=(d&&Number.isInteger(d.rev)?d.rev:0)+1,log=cleanClashLog(d&&d.clashes);
+    let entry=null;
+    if(clashes.length){
+      const items=[...new Set(clashes.map(clashText))];
+      entry={id:rev,by:DEVICE_ID,at:Date.now(),n:items.length,items:items.slice(0,12)};log.push(entry);
+    }
+    tx.set(ref,{state,updatedAt:Date.now(),rev,clashes:log.slice(-5)});
+    return {state,rev,entry};
+  })).then(r=>{
+    pushing=false;
+    if(uid!==cloudUid)return;
+    // r.state is what the account holds now. Anything typed while it was being saved
+    // is replayed on top of it, then goes up with the next save.
+    const now=clone(cloudStateObj());
+    const next=stable(now)===myStr?r.state:mergeState(mine,now,r.state).state;
+    setBase(r.state,uid);
+    if(stable(next)!==stable(now))adoptCloudState(next,'');
+    if(r.entry)noteClash(r.entry,true);
+    markClashSeen(uid,r.rev);
+    cloudStatus='synced';updateCloudUI();
+    const waiting=pendingRemote;pendingRemote=null;
+    if(localAhead()||pushAgain)pushCloud();
+    else if(waiting)onRemote(uid,waiting);
+  }).catch(e=>{
+    pushing=false;
+    if(uid!==cloudUid)return;
+    const code=(e&&e.code)||'',offline=code==='unavailable'||navigator.onLine===false;
+    if(!offline)console.error('cloud push failed',e);
+    cloudStatus=offline?'waiting':'error';updateCloudUI();
+    // offline, or lost a race with another device: the change is still on this device — try again
+    if(offline||code==='aborted'||code==='failed-precondition'||code==='deadline-exceeded')
+      retryTimer=setTimeout(()=>{if(uid===cloudUid&&localAhead())pushCloud();},offline?8000:1500);
+  });
 }
+window.addEventListener('online',()=>{if(cloudUid&&rosterReady&&localAhead())pushCloud();});
 function updateCloudUI(){
   const b=document.getElementById('cloudBtn'); if(!b)return;
   const cloud='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 18 18z"/></svg>';
-  const map={off:['Cloud',''],connecting:['Syncing…','warn'],synced:['Synced','ok'],error:['Cloud error','bad'],unavailable:['Offline','']};
+  const map={off:['Cloud',''],connecting:['Syncing…','warn'],synced:['Synced','ok'],error:['Cloud error','bad'],unavailable:['Offline',''],waiting:['Not sent yet','warn']};
   const [label,cls]=map[cloudStatus]||map.off;
   b.className='btn ghost cloud-'+(cls||'');
   b.innerHTML=cloud+'<span class="btxt">'+label+'</span>';
@@ -1608,6 +1760,7 @@ function updateCloudUI(){
     const m={off:'Not syncing: nobody is signed in.',connecting:'Connecting…',
       synced:'✓ The roster is saved to '+who+' and kept in step on every device signed in with it.',
       error:'The cloud refused the roster. Check the internet connection, and that the rules in firestore.rules are published in the Firebase console (SECURITY.md).',
+      waiting:'No connection: your changes are kept on this device and are sent as soon as the connection is back.',
       unavailable:'Offline: the app is working from this device only. Changes are saved here and sent to your account when the page is next opened with a connection.'};
     msg.textContent=m[cloudStatus]||m.off;
   }

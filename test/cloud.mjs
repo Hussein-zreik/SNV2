@@ -196,15 +196,23 @@ const rules = await rp.evaluate(async () => {
 
   // --- the roster: one document per manager account
   const roster = (n, uid) => db(n).collection('rosters').doc(uid);
-  await allow('manager saves their roster', roster('mgr', mgrUid).set({ state: { names: ['RN One'] }, updatedAt: 1 }));
+  const R = (rev, o = {}) => ({ state: { names: ['RN One'] }, updatedAt: 1, rev, ...o });
+  await deny('a first save must start at revision 1', roster('mgr', mgrUid).set(R(5)));
+  await deny('a save without a revision is refused (an out-of-date copy of the app)', roster('mgr', mgrUid).set({ state: {}, updatedAt: 1 }));
+  await allow('manager saves their roster', roster('mgr', mgrUid).set(R(1)));
   await allow('manager reads their roster', roster('mgr', mgrUid).get());
-  await deny('roster with an unexpected field is refused', roster('mgr', mgrUid).set({ state: {}, updatedAt: 1, extra: 1 }));
-  await deny('roster whose state is not an object is refused', roster('mgr', mgrUid).set({ state: 'x', updatedAt: 1 }));
+  await deny('saving again with the same revision is refused (it has not read the latest)', roster('mgr', mgrUid).set(R(1)));
+  await deny('skipping a revision is refused', roster('mgr', mgrUid).set(R(3)));
+  await deny('going back a revision is refused', roster('mgr', mgrUid).set(R(0)));
+  await allow('the next revision is accepted', roster('mgr', mgrUid).set(R(2, { clashes: [] })));
+  await deny('roster with an unexpected field is refused', roster('mgr', mgrUid).set(R(3, { extra: 1 })));
+  await deny('roster whose state is not an object is refused', roster('mgr', mgrUid).set(R(3, { state: 'x' })));
+  await deny('an oversized clash log is refused', roster('mgr', mgrUid).set(R(3, { clashes: [1, 2, 3, 4, 5, 6] })));
   await deny('another manager cannot read this roster', roster('other', mgrUid).get());
-  await deny('another manager cannot overwrite this roster', roster('other', mgrUid).set({ state: {}, updatedAt: 2 }));
+  await deny('another manager cannot overwrite this roster', roster('other', mgrUid).set(R(3)));
   await deny('another manager cannot delete this roster', roster('other', mgrUid).delete());
   await deny('an anonymous sign-in cannot read a roster', roster('anon', mgrUid).get());
-  await deny('an anonymous sign-in cannot create a roster under its own id', roster('anon', A.anon.auth().currentUser.uid).set({ state: {}, updatedAt: 1 }));
+  await deny('an anonymous sign-in cannot create a roster under its own id', roster('anon', A.anon.auth().currentUser.uid).set(R(1)));
   await deny('a visitor who is not signed in cannot read a roster', roster('staff', mgrUid).get());
   await deny('nobody can list rosters', db('mgr').collection('rosters').get());
 
@@ -307,6 +315,48 @@ check('its own earlier roster is kept as an undo step', await dev2.evaluate(() =
 check('"keep me signed in" is remembered on that device', await dev2.evaluate(() => localStorage.getItem('rn_signed') === '1'));
 await mgr.evaluate(() => { const b = snapshot(); names[1] = 'Edited On One'; pushHistory('rename', b); render(); saveState(); });
 check('an edit on one device reaches the other', await until(dev2, () => names[1] === 'Edited On One'));
+
+console.log('--- two devices editing at the same time ---');
+const K = await mgr.evaluate(() => ({ d1: '2031-03-03', d2: '2031-03-04', a: rid(4), b: rid(5), c: rid(6), nameC: names[6] }));
+const put = (page, day, id, v) => page.evaluate(({ day, id, v }) => {
+  const b = snapshot(); overrides[day] = { ...(overrides[day] || {}), [id]: v }; pushHistory('entry', b); render(); saveState();
+}, { day, id, v });
+const cell = (page, day, id) => page.evaluate(({ day, id }) => (overrides[day] || {})[id], { day, id });
+const note = page => page.evaluate(() => ({ shown: !document.getElementById('syncNote').hidden, text: document.getElementById('syncNoteBody').textContent }));
+// device 2 loses its connection, and both go on working
+await dctx.setOffline(true);
+await put(dev2, K.d1, K.b, 'HOL');                          // device 2: one nurse…
+await put(mgr, K.d1, K.a, 'VAC');                           // device 1: another nurse, same day
+check('the device without a connection keeps its change and says it is not sent yet',
+  await until(dev2, () => cloudStatus === 'waiting') && await cell(dev2, K.d1, K.b) === 'HOL');
+check('the connected device saves normally', await until(mgr, () => cloudStatus === 'synced' && !localAhead()));
+await dctx.setOffline(false);
+check('back online, both changes are kept on both devices',
+  await until(dev2, k => cloudStatus === 'synced' && !localAhead() && (overrides[k.d1] || {})[k.a] === 'VAC' && (overrides[k.d1] || {})[k.b] === 'HOL', K) &&
+  await until(mgr, k => (overrides[k.d1] || {})[k.a] === 'VAC' && (overrides[k.d1] || {})[k.b] === 'HOL', K));
+check('no clash is reported when the changes did not overlap', !(await note(mgr)).shown && !(await note(dev2)).shown);
+// now the same cell on both
+await dctx.setOffline(true);
+await put(mgr, K.d2, K.c, 'VAC');                           // saved first
+await until(mgr, () => cloudStatus === 'synced' && !localAhead());
+await put(dev2, K.d2, K.c, 'SL');                           // saved last
+await dctx.setOffline(false);
+check('same cell on both: the later save wins on both devices',
+  await until(dev2, k => cloudStatus === 'synced' && !localAhead() && (overrides[k.d2] || {})[k.c] === 'SL', K) &&
+  await until(mgr, k => (overrides[k.d2] || {})[k.c] === 'SL', K));
+const n2 = await note(dev2), n1 = await (await until(mgr, () => !document.getElementById('syncNote').hidden), note(mgr));
+check('the device that saved last is told its version replaced another', n2.shown && /Your version was kept/.test(n2.text) && n2.text.includes(`${K.nameC}: VAC → SL`), JSON.stringify(n2));
+check('the device whose change was replaced is told exactly what changed', n1.shown && /Its version was kept/.test(n1.text) && n1.text.includes(`${K.nameC}: VAC → SL`), JSON.stringify(n1));
+check('it can bring its own version back with Undo', await mgr.evaluate(() => /saved over a change made here/.test(history[history.length - 1].label)));
+await mgr.click('#syncNote button');
+check('the notice stays until dismissed, then goes', !(await note(mgr)).shown);
+await mgr.reload();
+check('a clash already seen is not shown again after a reload', await until(mgr, () => cloudStatus === 'synced' && !!mgrUser) && !(await note(mgr)).shown);
+const revs = await mgr.evaluate(async () => { const d = (await firebase.firestore().collection('rosters').doc(mgrUser.uid).get()).data(); return { rev: d.rev, log: d.clashes.length }; });
+check('every save advanced the revision by one, and the clash is on record', Number.isInteger(revs.rev) && revs.rev >= 5 && revs.log === 1, JSON.stringify(revs));
+check('an out-of-date copy of the app cannot overwrite the roster', await mgr.evaluate(() =>
+  firebase.firestore().collection('rosters').doc(mgrUser.uid).set({ state: cloudStateObj(), updatedAt: Date.now() }).then(() => 'ok', e => e.code)) === 'permission-denied');
+await dev2.evaluate(() => dismissSyncNote());
 await dev2.close();
 // the same device with no internet: Firebase cannot load at all
 const off = await dctx.newPage();
