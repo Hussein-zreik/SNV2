@@ -1,0 +1,125 @@
+rules_version = '2';
+
+// Firestore security rules for the RN Rotating Schedule.
+//
+// Paste these into: Firebase console -> Firestore Database -> Rules -> Publish.
+// See SECURITY.md for the setup steps and their order.
+//
+// Three areas:
+//
+//   rosters/{uid}             the roster itself (cloud sync). One document per manager
+//                             account; only that account — signed in with email +
+//                             password — can read or write it. There is no shared code.
+//
+//   schedules/{unitCode}      LEGACY. Where the roster lived when it was shared by a
+//                             unit code. Nothing can be written there any more; a
+//                             manager account may read it once (to move the roster into
+//                             its own document) and delete it.
+//
+//   requestForms/{formId}     the staff request link. formId is a long random id in
+//                             the link:
+//     - anyone holding the link can read the form (the staff name list) and SEND a
+//       request off; they can never read, change or delete a request;
+//     - only the manager who created the form can read the requests, mark them done,
+//       delete them, or pause the form.
+//
+// A "manager" is any account signed in with a password. Create that account by hand
+// (Authentication -> Users -> Add user) and keep public sign-up closed.
+//
+// test/cloud.mjs runs these rules in the Firebase emulator (npm run test:cloud).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // a manager is signed in with a password account, never an anonymous sign-in
+    function isManager() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+
+    // ---------- roster sync ----------
+    match /rosters/{uid} {
+      // Every save carries rev = the rev it read + 1, so a device can never write over
+      // a roster it has not seen (two devices editing at once: the app re-reads, merges
+      // and tries again). clashes is the short log of what such a merge had to choose.
+      function validRoster(d) {
+        return d.keys().hasOnly(['state', 'updatedAt', 'rev', 'clashes'])
+          && d.state is map
+          && d.rev is int
+          && (!('clashes' in d) || (d.clashes is list && d.clashes.size() <= 5));
+      }
+      allow read, delete: if isManager() && request.auth.uid == uid;
+      allow create: if isManager() && request.auth.uid == uid
+        && validRoster(request.resource.data)
+        && request.resource.data.rev == 1;
+      allow update: if isManager() && request.auth.uid == uid
+        && validRoster(request.resource.data)
+        && request.resource.data.rev == resource.data.get('rev', 0) + 1;
+    }
+
+    // ---------- legacy: the roster shared by unit code ----------
+    match /schedules/{unitCode} {
+      allow get, delete: if isManager();
+    }
+
+    // ---------- staff request forms ----------
+    function formData(formId) {
+      return get(/databases/$(database)/documents/requestForms/$(formId)).data;
+    }
+    function ownsForm(formId) {
+      return isManager() && formData(formId).owner == request.auth.uid;
+    }
+    function validForm(d) {
+      return d.keys().hasOnly(['owner', 'open', 'title', 'anchor', 'ids', 'names', 'updatedAt'])
+        && d.keys().hasAll(['owner', 'open', 'title', 'anchor', 'ids', 'names'])
+        && d.owner is string
+        && d.open is bool
+        && d.title is string && d.title.size() <= 60
+        && d.anchor is string && d.anchor.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && d.ids is list && d.ids.size() >= 1 && d.ids.size() <= 200
+        && d.names is list && d.names.size() == d.ids.size();
+    }
+    // a request: for an RN on the form's list, 1-14 dates, a reason, stamped by the server
+    function validRequest(formId, d) {
+      let f = formData(formId);
+      return f.open == true
+        && d.keys().hasOnly(['rnId', 'name', 'dates', 'reason', 'createdAt'])
+        && d.keys().hasAll(['rnId', 'name', 'dates', 'reason', 'createdAt'])
+        && d.rnId is string && d.rnId in f.ids
+        && d.name is string && d.name.size() <= 120
+        && d.dates is string
+        && d.dates.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}(,[0-9]{4}-[0-9]{2}-[0-9]{2}){0,13}$')
+        && d.reason is string && d.reason.size() >= 1 && d.reason.size() <= 300
+        && d.createdAt == request.time;
+    }
+
+    match /requestForms/{formId} {
+      allow get: if true;          // the link holder; the id cannot be guessed...
+      // ...or listed, except by a manager finding their own form after signing in
+      allow list: if isManager() && resource.data.owner == request.auth.uid;
+      allow create: if isManager()
+        && formId.matches('^[A-Za-z0-9]{20,40}$')
+        && request.resource.data.owner == request.auth.uid
+        && validForm(request.resource.data);
+      allow update: if isManager()
+        && resource.data.owner == request.auth.uid
+        && request.resource.data.owner == resource.data.owner
+        && validForm(request.resource.data);
+      allow delete: if isManager() && resource.data.owner == request.auth.uid;
+
+      match /requests/{reqId} {
+        allow create: if validRequest(formId, request.resource.data);
+        allow read, delete: if ownsForm(formId);
+        // the manager may only tick a request as done
+        allow update: if ownsForm(formId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['done'])
+          && request.resource.data.done is bool;
+      }
+    }
+
+    // everything else is denied
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

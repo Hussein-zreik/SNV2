@@ -1,0 +1,19 @@
+{
+  "name": "rn-rotating-schedule",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Single-file RN rotating shift scheduler with requests, fairness reporting and cloud sync",
+  "scripts": {
+    "lint": "eslint .",
+    "test:unit": "node test/engine.test.mjs && TZ=America/Los_Angeles node test/engine.test.mjs && node test/vendor.test.mjs",
+    "test": "node test/audit.mjs",
+    "test:cloud": "npx --yes firebase-tools@13.35.1 emulators:exec --only firestore,auth --project demo-snv2 \"node test/cloud.mjs\""
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-plugin-html": "^8.2.0",
+    "firebase": "10.14.1",
+    "playwright": "^1.47.0"
+  }
+}

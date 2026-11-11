@@ -1,0 +1,56 @@
+{
+  "about": "Third-party code served by this site. Each file is an exact copy of a file in the published npm package. Checked by test/vendor.test.mjs.",
+  "files": [
+    {
+      "file": "firebase-app-compat.js",
+      "package": "firebase",
+      "version": "10.14.1",
+      "from": "firebase-app-compat.js",
+      "license": "Apache-2.0",
+      "sha384": "sha384-ZaR6mWzmJtrRibZ1Vm7SoHFr8OXjyAuGAXalGDKqbxFT18oi/z+oZLIRFkpeNor1"
+    },
+    {
+      "file": "firebase-auth-compat.js",
+      "package": "firebase",
+      "version": "10.14.1",
+      "from": "firebase-auth-compat.js",
+      "license": "Apache-2.0",
+      "sha384": "sha384-I1LYojsZ5RM1cOda44Z2h42Qa6YfsQ1XkXxREnhp4ueYBR/4d1pG1K+NZM537Vsj"
+    },
+    {
+      "file": "firebase-firestore-compat.js",
+      "package": "firebase",
+      "version": "10.14.1",
+      "from": "firebase-firestore-compat.js",
+      "license": "Apache-2.0",
+      "sha384": "sha384-Ke0FJhH7LyRqDxZ0wt+/OXV38yfQVu7g9VPEEGjYmB4RVOY/ta04uecRhsMwT7V3"
+    },
+    {
+      "file": "exceljs.min.js",
+      "package": "exceljs",
+      "version": "4.4.0",
+      "from": "dist/exceljs.min.js",
+      "license": "MIT",
+      "npmIntegrity": "sha512-XctvKaEMaj1Ii9oDOqbW/6e1gXknSY4g/aLCDicOXqBE4M0nRWkUu0PTp++UPNzoFY12BNHMfs/VadKIS6llvg==",
+      "sha384": "sha384-Pqp51FUN2/qzfxZxBCtF0stpc9ONI6MYZpVqmo8m20SoaQCzf+arZvACkLkirlPz"
+    },
+    {
+      "file": "jspdf.umd.min.js",
+      "package": "jspdf",
+      "version": "2.5.2",
+      "from": "dist/jspdf.umd.min.js",
+      "license": "MIT",
+      "npmIntegrity": "sha512-myeX9c+p7znDWPk0eTrujCzNjT+CXdXyk7YmJq5nD5V7uLLKmSXnlQ/Jn/kuo3X09Op70Apm0rQSnFWyGK8uEQ==",
+      "sha384": "sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/"
+    },
+    {
+      "file": "jspdf.plugin.autotable.min.js",
+      "package": "jspdf-autotable",
+      "version": "3.8.2",
+      "from": "dist/jspdf.plugin.autotable.min.js",
+      "license": "MIT",
+      "npmIntegrity": "sha512-zW1ix99/mtR4MbIni7IqvrpfHmuTaICl6iv6wqjRN86Nxtwaw/QtOeDbpXqYSzHIJK9JvgtLM283sc5x+ipkJg==",
+      "sha384": "sha384-fCAW/rDWORTbQXSiB7mOg0QtQ5c+r0f544y6XoKjuVva0nMBlCpNUjiFeG5iMdS3"
+    }
+  ]
+}

@@ -1,0 +1,1049 @@
+/**
+ * Rule audit for the RN Rotating Schedule.
+ *
+ *   npm test                 # default sizes
+ *   SEEDS=300 npm test       # deeper sweep
+ *
+ * Loads index.html in headless Chromium and asserts the scheduling rules that
+ * the app promises. Exits non-zero if any rule is broken, so CI catches
+ * regressions. It runs with the network blocked and the Firebase files withheld, so
+ * nothing here can reach the real project; the app opens the way it does on a
+ * signed-in device where Firebase could not load (the `rn_signed` marker). The Excel
+ * and PDF libraries do load, from vendor/, under the page's real security policy. Signing in itself, the cloud roster
+ * and the security rules are covered by test/cloud.mjs in the Firebase emulators.
+ */
+import { chromium } from 'playwright';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const APP = 'file://' + path.resolve(HERE, '..', 'index.html');
+const SEEDS = +(process.env.SEEDS || 60);        // seeds for the no-request sweep
+const CYCLES = +(process.env.CYCLES || 20);      // cycles per seed
+const SCEN_SEEDS = +(process.env.SCEN_SEEDS || 25); // seeds per request scenario
+
+let failures = 0;
+const check = (name, ok, detail = '') => {
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : '  -> ' + detail}`);
+  if (!ok) failures++;
+};
+
+async function launch() {
+  try { return await chromium.launch(); }
+  catch { return await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' }); }
+}
+
+const browser = await launch();
+const ctx = await browser.newContext();
+await ctx.route(/^https?:\/\//, r => r.abort());            // offline on purpose: same result in CI and in a sandbox
+await ctx.route(/\/vendor\/firebase-/, r => r.abort());     // and no Firebase: that side is test/cloud.mjs
+const cspBlocked = [];
+await ctx.exposeBinding('__cspBlocked', (src, v) => { cspBlocked.push(v); });
+await ctx.addInitScript(() => document.addEventListener('securitypolicyviolation', e => window.__cspBlocked(`${e.blockedURI} (${e.violatedDirective})`)));
+await ctx.addInitScript(() => sessionStorage.setItem('rn_signed', '1'));
+const page = await ctx.newPage();
+const pageErrors = [];
+page.on('pageerror', e => pageErrors.push(String(e)));
+await page.goto(APP);
+await page.waitForTimeout(700);
+
+/* ---------------- 1. core rules, no requests ---------------- */
+const reg = await page.evaluate(({ SEEDS, CYCLES }) => {
+  const WORK = new Set(['D6','D7','S8','S9','S10','N7']);
+  const MIN = [{D6:2,D7:2,S8:1,S9:2,S10:1},{D6:2,D7:2,S8:1,S9:2,S10:1},{D6:2,D7:2,S8:1,S9:2,S10:1},
+    {D6:2,D7:2,S8:1,S9:2,S10:1},{D6:2,D7:2,S8:1,S9:2,S10:1},{D7:2},{D7:2}];
+  const trail = r => { let c=0; for (let d=13; d>=0 && WORK.has(r[d]); d--) c++; return c; };
+  const lead  = r => { let c=0; for (let d=0; d<14 && WORK.has(r[d]); d++) c++; return c; };
+  const maxRun = r => { let m=0,x=0; for (let d=0; d<14; d++) { if (WORK.has(r[d])) { x++; if (x>m) m=x; } else x=0; } return m; };
+  const cnt = (sh,d,t) => { let c=0; for (let i=0;i<sh.length;i++) if (sh[i][d]===t) c++; return c; };
+
+  manualMode = false; overrides = {}; committedCycles = {}; cycleSeeds = {};
+  const r = { boundaryRun:0, cycleRun:0, notSeven:0, belowMin:0, nightCount:0, satStruct:0, sunStruct:0 };
+  for (let s = 0; s < SEEDS; s++) {
+    seed = (s * 2654435761) >>> 0;
+    for (let off = 0; off < CYCLES; off++) {
+      const A = computeSchedule(off).sh, B = computeSchedule(off + 1).sh;
+      for (let i = 0; i < A.length; i++) {
+        const t = trail(A[i]), l = lead(B[i]);
+        if (t > 0 && l > 0 && t + l > 3) r.boundaryRun++;              // <=3 across the cycle seam
+        if (maxRun(A[i]) > 3) r.cycleRun++;                            // <=3 within a cycle
+        if (A[i].filter(x => WORK.has(x)).length !== 7) r.notSeven++;  // exactly 7 shifts
+      }
+      for (let d = 0; d < 14; d++) if (cnt(A, d, 'N7') !== 2) r.nightCount++;   // 2 nurses per night
+      for (const w of [0, 1]) {                                                 // weekend structure
+        const sat = w*7+5, sun = w*7+6;
+        if (cnt(A,sat,'D7') !== 2 || cnt(A,sat,'S10') !== 0) r.satStruct++;   // 2-RN turn, no surplus
+        if (cnt(A,sun,'D7') !== 2) r.sunStruct++;
+      }
+      for (let d = 0; d < 14; d++) {                                            // daily minimums
+        const need = MIN[d % 7];
+        for (const t in need) if (cnt(A, d, t) < need[t]) r.belowMin++;
+      }
+    }
+  }
+  return r;
+}, { SEEDS, CYCLES });
+
+console.log(`\n--- core rules (no requests, ${SEEDS} seeds x ${CYCLES + 1} cycles) ---`);
+check('<=3 consecutive days across the cycle seam', reg.boundaryRun === 0, reg.boundaryRun + ' violations');
+check('<=3 consecutive days within a cycle',        reg.cycleRun === 0,    reg.cycleRun + ' violations');
+check('every nurse works exactly 7 shifts',         reg.notSeven === 0,    reg.notSeven + ' nurses off 7');
+check('exactly 2 nurses on every night',            reg.nightCount === 0,  reg.nightCount + ' nights wrong');
+check('Saturday = 2x D7, no surplus',               reg.satStruct === 0,   reg.satStruct + ' weekends wrong');
+check('Sunday = 2x D7',                             reg.sunStruct === 0,   reg.sunStruct + ' weekends wrong');
+check('no day below minimum staffing',              reg.belowMin === 0,    reg.belowMin + ' shortfalls');
+
+/* ---------------- 1b. per-group week split and night counts ---------------- */
+const split = await page.evaluate(({ SEEDS, CYCLES }) => {
+  const WORK = new Set(['D6','D7','S8','S9','S10','N7']);
+  manualMode = false; overrides = {}; committedCycles = {}; cycleSeeds = {};
+  const r = { split43: 0, nightNot7: 0 };
+  for (let s = 0; s < Math.min(SEEDS, 40); s++) {
+    seed = (s * 2654435761) >>> 0;
+    for (let off = 0; off < Math.min(CYCLES, 12); off++) {
+      const sh = computeSchedule(off).sh;
+      for (let i = 0; i < sh.length; i++) {
+        const nights = sh[i].filter(x => x === 'N7').length;
+        if (nights > 0) { if (nights !== 7) r.nightNot7++; continue; }
+        // day nurses: Group A works 4 then 3, Group B works 3 then 4
+        const w1 = sh[i].slice(0, 7).filter(x => WORK.has(x)).length;
+        const w2 = sh[i].slice(7, 14).filter(x => WORK.has(x)).length;
+        const want = groups[i] === 'A' ? [4, 3] : [3, 4];
+        if (w1 !== want[0] || w2 !== want[1]) r.split43++;
+      }
+    }
+  }
+  return r;
+}, { SEEDS, CYCLES });
+console.log('\n--- per-group week split ---');
+check('Group A works 4 then 3, Group B 3 then 4', split.split43 === 0, split.split43 + ' nurses wrong');
+check('every night nurse works exactly 7 nights', split.nightNot7 === 0, split.nightNot7 + ' wrong');
+
+/* ---------------- 1c. Manual mode behaves like Manual mode ---------------- */
+const manual = await page.evaluate(() => {
+  const WORK = new Set(['D6','D7','S8','S9','S10','N7']);
+  const trail = r => { let c=0; for (let d=13; d>=0 && WORK.has(r[d]); d--) c++; return c; };
+  const lead  = r => { let c=0; for (let d=0; d<14 && WORK.has(r[d]); d++) c++; return c; };
+  overrides = {}; frozen = {}; seed = 4242;
+  // a generated fortnight must look the same to a device in Auto
+  let identical = 0, total = 0;
+  for (let off = 0; off < 5; off++) {
+    manualMode = true; committedCycles = {}; cycleSeeds = {}; cycleOffset = off; render(); generateFortnight();
+    const m = JSON.stringify(sched.sh);
+    manualMode = false; render();
+    total++; if (m === JSON.stringify(sched.sh)) identical++;
+  }
+  // the seam rule must hold in Manual mode too
+  manualMode = true; committedCycles = {}; cycleSeeds = {};
+  for (let off = 0; off < 6; off++) { cycleOffset = off; render(); generateFortnight(); }
+  let seam = 0;
+  for (let off = 0; off < 5; off++) {
+    const A = computeSchedule(off).sh, B = computeSchedule(off + 1).sh;
+    for (let i = 0; i < A.length; i++) { const t = trail(A[i]), l = lead(B[i]); if (t > 0 && l > 0 && t + l > 3) seam++; }
+  }
+  // an ungenerated fortnight stays blank
+  cycleOffset = 40; render();
+  const blank = sched.sh.reduce((a, r) => a + r.filter(x => x !== 'OFF').length, 0);
+  // a remote push from a device still in Auto must not flip this device
+  manualMode = true;
+  applyStateObject({ names:[...names], groups:[...groups], holBal:[...holBal], vacBal:[...vacBal],
+    order:[...order], ids:[...ids], seed:1, startDate:startDateStr, overrides:{}, history:[],
+    manualMode:false, committedCycles:{}, cycleSeeds:{} });
+  const stillManual = manualMode;
+  manualMode = false; committedCycles = {}; cycleSeeds = {}; overrides = {}; frozen = {}; cycleOffset = 0; render();
+  return { identical, total, seam, blank, stillManual };
+});
+console.log('\n--- Manual mode ---');
+check('generated fortnight matches what an Auto device shows', manual.identical === manual.total, manual.identical + '/' + manual.total);
+check('<=3 across the cycle seam holds in Manual too', manual.seam === 0, manual.seam + ' violations');
+check('an ungenerated fortnight stays blank', manual.blank === 0, manual.blank + ' filled cells');
+check('a synced Auto device cannot flip this one to Auto', manual.stillManual === true);
+
+/* ---------------- 1d. Manual Generate fills, then FREEZES (edits don't cascade) ---------------- */
+const handGen = await page.evaluate(() => {
+  manualMode = true; committedCycles = {}; cycleSeeds = {}; overrides = {}; frozen = {}; seed = 9; cycleOffset = 0;
+  render(); generateFortnight();                       // fill the gaps + bake to a fixed grid
+  const g1 = sched.sh.map(r => r.slice());
+  const filled = g1.reduce((a, r) => a + r.filter(x => x !== 'OFF').length, 0);
+  // the 2A+2B night turn is placed automatically: exactly 2 per night, and each
+  // night nurse works 7 nights
+  const perNight = []; for (let d = 0; d < 14; d++) { let c = 0; for (let i = 0; i < g1.length; i++) if (g1[i][d] === 'N7') c++; perNight.push(c); }
+  const nightsCovered = perNight.every(x => x === 2);
+  let nightNot7 = 0; for (let i = 0; i < g1.length; i++) { const n = g1[i].filter(x => x === 'N7').length; if (n > 0 && n !== 7) nightNot7++; }
+  const weekendSurplus = (() => { let bad = 0; for (const wd of [5,6,12,13]) { let d7=0,s10=0; for (let i=0;i<g1.length;i++){ if(g1[i][wd]==='D7')d7++; if(g1[i][wd]==='S10')s10++; } if (d7!==2||s10!==0) bad++; } return bad; })();
+  // now edit ONE cell through the real cell-editor path
+  mStaffId = null; mRn = 3; mDay = 4; mSel = (sched.sh[3][4] === 'OFF' ? 'D6' : 'OFF');
+  saveCell();
+  const g2 = sched.sh.map(r => r.slice());
+  let changed = 0, list = [];
+  for (let i = 0; i < g1.length; i++) for (let d = 0; d < 14; d++) if (g1[i][d] !== g2[i][d]) { changed++; list.push(i+':'+d); }
+  // a frozen fortnight renders identically on an Auto device
+  const mine = JSON.stringify(g2);
+  manualMode = false; render();
+  const asAuto = JSON.stringify(sched.sh);
+  manualMode = false; committedCycles = {}; cycleSeeds = {}; overrides = {}; frozen = {}; cycleOffset = 0; render();
+  return { filled, nightsCovered, nightNot7, weekendSurplus, changed, list, sameOnAuto: mine === asAuto };
+});
+check('Manual Generate fills the fortnight', handGen.filled > 50, handGen.filled + ' cells filled');
+check('Manual Generate places the night turn (2 per night)', handGen.nightsCovered === true, 'some nights not 2');
+check('Manual Generate: each night nurse works 7 nights', handGen.nightNot7 === 0, handGen.nightNot7 + ' wrong');
+check('no weekend surplus in a generated fortnight', handGen.weekendSurplus === 0, handGen.weekendSurplus + ' weekend days wrong');
+check('editing a cell changes ONLY that cell (no cascade)', handGen.changed === 1, handGen.changed + ' cells changed: ' + handGen.list.join(','));
+check('a frozen fortnight looks identical on an Auto device', handGen.sameOnAuto === true);
+
+/* ---------------- 2. requests must not break the rules ---------------- */
+const scen = await page.evaluate((NS) => {
+  const WORK = new Set(['D6','D7','S8','S9','S10','N7']);
+  const ENTRY = new Set(['D6','D7','S8','S9','S10','N7','HOL','VAC']);
+  const MIN = [{D6:2,D7:2,S8:1,S9:2,S10:1},{D6:2,D7:2,S8:1,S9:2,S10:1},{D6:2,D7:2,S8:1,S9:2,S10:1},
+    {D6:2,D7:2,S8:1,S9:2,S10:1},{D6:2,D7:2,S8:1,S9:2,S10:1},{D7:2},{D7:2}];
+  const K = d => { const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; };
+  const maxRun = r => { let m=0,x=0; for (let d=0;d<14;d++){ if (WORK.has(r[d])){x++;if(x>m)m=x;} else x=0; } return m; };
+  const cnt = (sh,d,t) => { let c=0; for (let i=0;i<sh.length;i++) if (sh[i][d]===t) c++; return c; };
+  const days = computeSchedule(0).days;
+
+  // Rule priority: the 4/3 · 3/4 split outranks <=3 in a row. So a run over 3
+  // days only counts against the scheduler for a nurse with NO entries this
+  // fortnight — any entry (a duty, a day off, leave) can leave 4 in a row as the
+  // only way to reach the count, and the health banner reports it.
+  function violations(sh, reqs) {
+    const v = [];
+    for (const [rn, d, ty] of reqs) if (sh[rn][d] !== ty) v.push('request not honored');
+    for (let i = 0; i < sh.length; i++)
+      if (maxRun(sh[i]) > 3 && !reqs.some(r => r[0] === i)) v.push('run over 3 days');
+    // the golden rule: every nurse works exactly their split each week, their
+    // entries included — unless the manager entered more than the split by hand
+    for (let i = 0; i < sh.length; i++) for (const w of [0, 1]) {
+      const lo = w*7, hi = lo+7, split = (groups[i] === 'A' ? [4,3] : [3,4])[w];
+      const n = sh[i].slice(lo, hi).filter(x => ENTRY.has(x)).length;
+      const entered = reqs.filter(r => r[0]===i && ENTRY.has(r[2]) && r[1]>=lo && r[1]<hi).length;
+      if (n !== Math.max(split, entered)) v.push('off the 4/3 split');
+    }
+    // a night lost to an entry is backfilled from the night list
+    for (let d = 0; d < 14; d++) if (cnt(sh, d, 'N7') < 2) v.push('night short');
+    // NOTE: a request may pull a day below minimum staffing. That is now
+    // acceptable by design — the turn quota is absolute, so rather than hand
+    // someone an extra duty the day is left short for a manual fix. So we do
+    // NOT flag below-minimum here (it is still flagged in the no-request core
+    // suite, where the roster has the capacity to meet every minimum).
+    for (let i = 0; i < sh.length; i++)
+      if (!reqs.some(r => r[0] === i) && sh[i].filter(x => ENTRY.has(x)).length < 7)
+        v.push('unrequested nurse under 7');
+    // the turn quota (4/3-3/4) is absolute: no non-night nurse works MORE than
+    // their weekly quota, unless the manager explicitly requested extra working
+    // shifts on them. This is the guard against "extra duty when not their turn".
+    for (let i = 0; i < sh.length; i++) {
+      if (sh[i].some(x => x === 'N7')) continue;                 // night nurses excluded
+      for (const w of [0, 1]) {
+        const lo = w*7, hi = lo+7;
+        const actual = sh[i].slice(lo, hi).filter(x => WORK.has(x)).length;
+        const locked = reqs.filter(r => r[0]===i && WORK.has(r[2]) && r[1]>=lo && r[1]<hi).length;
+        const quota = (groups[i] === 'A' ? [4,3] : [3,4])[w];
+        if (actual > Math.max(quota, locked)) v.push('over quota (extra duty)');
+      }
+    }
+    return v;
+  }
+
+  const results = {};
+  const scenario = (name, build) => {
+    const seen = {}; let total = 0;
+    for (let s = 0; s < NS; s++) {
+      seed = (s * 7919 + 13) >>> 0; overrides = {};
+      const reqs = build();
+      for (const [rn, d, ty] of reqs) {
+        const k = K(days[d]);
+        if (!overrides[k]) overrides[k] = {};
+        overrides[k][rid(rn)] = ty;
+      }
+      for (const v of violations(computeSchedule(0).sh, reqs)) { seen[v] = (seen[v]||0)+1; total++; }
+    }
+    overrides = {};
+    results[name] = { total, seen };
+  };
+
+  scenario('single requested duty',        () => [[3,1,'D7']]);
+  scenario('Mon,Tue,Sat,Sun all D7',       () => [[3,0,'D7'],[3,1,'D7'],[3,5,'D7'],[3,6,'D7']]);
+  scenario('one requested day off',        () => [[4,2,'OFF']]);
+  scenario('three requested days off',     () => [[4,0,'OFF'],[4,1,'OFF'],[4,2,'OFF']]);
+  scenario('five-day vacation block',      () => [[5,0,'VAC'],[5,1,'VAC'],[5,2,'VAC'],[5,3,'VAC'],[5,4,'VAC']]);
+  scenario('Req off Monday of week 2',     () => [[15,7,'REQ']]);
+  scenario('three nurses Req off week 2',  () => [[15,7,'REQ'],[16,8,'REQ'],[17,9,'REQ']]);
+  scenario('weekend Sat+Sun requested',    () => [[6,5,'D7'],[6,6,'D7']]);
+  scenario('Saturday S10 requested',       () => [[7,5,'S10']]);
+  scenario('three nurses off same day',    () => [[2,3,'OFF'],[3,3,'OFF'],[4,3,'OFF']]);
+  scenario('mixed duty/off/vacation',      () => [[2,0,'D6'],[3,1,'OFF'],[8,2,'VAC'],[9,5,'D7']]);
+  scenario('day duty for night-turn nurses', () => { const t = turnFor(0);
+    return [[t.nightA[0],2,'D6'],[t.nightB[0],0,'S9']]; });
+  scenario('day off on a night-turn night',  () => { const t = turnFor(0); return [[t.nightA[1],5,'REQ']]; });
+  scenario('eight mixed requests',         () => { const T=['D6','D7','S8','S9','S10','OFF','VAC','REQ'],o=[];
+    for (let q=0;q<8;q++) o.push([(q*2+1)%19,(q*3)%14,T[q%T.length]]); return o; });
+  scenario('fifteen mixed requests',       () => { const T=['D6','D7','S8','S9','OFF','VAC','REQ'],o=[];
+    for (let q=0;q<15;q++) o.push([(q*3+2)%19,(q*5+1)%14,T[q%T.length]]); return o; });
+  return results;
+}, SCEN_SEEDS);
+
+console.log(`\n--- requests respect the rules (${SCEN_SEEDS} seeds per scenario) ---`);
+for (const [name, r] of Object.entries(scen))
+  check(name, r.total === 0, JSON.stringify(r.seen));
+
+/* ---------------- 2b. editing a GENERATED fortnight ---------------- */
+// Auto mode rebalances ONLY the edited nurse back to their split; Manual mode
+// leaves the edit exactly as typed (the manager fixes the count by hand).
+const edits = await page.evaluate(() => {
+  const ENTRY = new Set(['D6','D7','S8','S9','S10','N7','HOL','VAC','SL']);
+  const wk = (row, w) => row.slice(w*7, w*7+7).filter(x => ENTRY.has(x)).length;
+  const gen = () => { overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {};
+    manualMode = true; cycleOffset = 0; seed = 99; render(); generateFortnight(); };
+  // a day nurse with a free weekday in week 1, and a night-turn nurse
+  const pick = () => { for (let i = 0; i < N; i++) { const r = sched.sh[i];
+    if (r.includes('N7')) continue; const d = r.slice(0,5).indexOf('OFF'); if (d >= 0) return [i, d]; } };
+  const edit = (i, d, s) => { openCellM(i, d); mSel = s; saveCell(); };
+  const out = {};
+
+  gen(); manualMode = false; render();                       // Auto mode, generated fortnight
+  let [i, d] = pick(); const others = sched.sh.map(r => r.join()).filter((_, j) => j !== i);
+  edit(i, d, 'S9');
+  out.autoKept = sched.sh[i][d] === 'S9';
+  out.autoSplit = wk(sched.sh[i], 0) === (groups[i]==='A'?4:3) && wk(sched.sh[i], 1) === (groups[i]==='A'?3:4);
+  out.autoOthers = JSON.stringify(sched.sh.map(r => r.join()).filter((_, j) => j !== i)) === JSON.stringify(others);
+  const t = turnFor(0), n = t.nightA[0];
+  edit(n, 2, 'D6');                                          // day duty for a night-turn nurse
+  out.autoNight = wk(sched.sh[n], 0) === 4 && sched.sh[n][1] !== 'N7';
+  out.nightShortShown = /off the N7 minimum \([^)]*: 1 of 2/.test(document.getElementById('banner').textContent);
+
+  gen();                                                     // Manual mode, generated fortnight
+  [i, d] = pick(); const before = wk(sched.sh[i], 0);
+  edit(i, d, 'S9');
+  out.manualNoRebalance = wk(sched.sh[i], 0) === before + 1;
+
+  // five duties typed into one week -> red per-week warning in the banner
+  overrides = {}; frozen = {}; committedCycles = {}; manualMode = false; render();
+  const k = x => isoKey(sched.days[x]);
+  for (const x of [0,1,2,3,4]) overrides[k(x)] = { ...(overrides[k(x)]||{}), [rid(6)]: 'D6' };
+  render();
+  const b = document.getElementById('banner');
+  out.weekOverBanner = b.classList.contains('bad') && b.textContent.includes(`${names[6]}: 5 duties in week 1 (max ${groups[6]==='A'?4:3})`);
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; manualMode = false; render();
+  return out;
+});
+console.log('\n--- editing a generated fortnight ---');
+check('Auto: the edit is kept', edits.autoKept);
+check('Auto: the edited nurse is rebalanced to their split', edits.autoSplit);
+check('Auto: no other nurse changes', edits.autoOthers);
+check('Auto: a night-turn nurse drops a night, stays at 4', edits.autoNight);
+check('Auto: the dropped night shows as short', edits.nightShortShown);
+check('Manual: the edit is not rebalanced', edits.manualNoRebalance);
+check('banner: a week over the split is flagged in red', edits.weekOverBanner);
+
+/* ---------------- 2c. Settings → Generate: generate part by part ---------------- */
+const parts = await page.evaluate(() => {
+  const ENTRY = new Set(['D6','D7','S8','S9','S10','N7','HOL','VAC','SL']);
+  const wk = (row, w) => row.slice(w*7, w*7+7).filter(x => ENTRY.has(x)).length;
+  const tick = (wd, we, ni) => { setGenPart('weekdays', wd); setGenPart('weekends', we); setGenPart('nights', ni); };
+  const lbl = () => document.getElementById('genLbl').textContent;
+  const bnr = () => document.getElementById('banner').textContent;
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {};
+  manualMode = true; cycleOffset = 0; seed = 321; render();
+  const out = {};
+  settTab('gen');
+  out.tabShown = !document.getElementById('settPanel-gen').hidden && !!document.getElementById('gpNights');
+
+  tick(true, false, false); generateFortnight();                       // weekdays only
+  let sh = sched.sh;
+  out.wdNoNights = sh.every(r => !r.includes('N7'));
+  out.wdNoWeekend = sh.every(r => [5,6,12,13].every(d => r[d] === 'OFF'));
+  out.wdHasDays = sh.some(r => r.slice(0,5).some(x => x !== 'OFF'));
+  out.bannerPartial = bnr().includes('Partly generated') && bnr().includes('Nights');
+  out.lblAfterWd = lbl();                                              // ticked part done -> Regenerate
+  const wdGrid = sh.map(r => r.join());
+
+  tick(false, false, true);
+  out.lblNights = lbl();                                               // nights not done -> Generate
+  generateFortnight();
+  sh = sched.sh;
+  out.nightsKeptWeekdays = sh.every((r, i) => wdGrid[i].split(',').every((x, d) => x === 'OFF' || r[d] === x));
+  out.nights2 = [...Array(14).keys()].every(d => sh.filter(r => r[d] === 'N7').length === 2);
+
+  tick(false, true, false); generateFortnight();                       // weekends
+  sh = sched.sh;
+  out.allOnSplit = sh.every((r, i) => wk(r, 0) === (groups[i]==='A'?4:3) && wk(r, 1) === (groups[i]==='A'?3:4));
+  out.planDropped = !genPlan[cycleStartISO(0)];
+  out.bannerFull = !bnr().includes('Partly generated');
+
+  undo();                                                              // back to 2 parts
+  const pd = partsDone(cycleStartISO(0));
+  out.undoRestores = pd.includes('nights:N7') && pd.includes('weekdays:D6') && !pd.includes('weekends:D7')
+    && sched.sh.every(r => [5,6,12,13].every(d => r[d] !== 'D7'));
+  clearCycle.__confirm = window.confirm; window.confirm = () => true; clearCycle(); window.confirm = clearCycle.__confirm;
+  out.clearWipes = !genDone[cycleStartISO(0)] && !genPlan[cycleStartISO(0)];
+
+  tick(false, false, false); const f0 = JSON.stringify(frozen); generateFortnight();
+  out.noneTicked = JSON.stringify(frozen) === f0;
+
+  tick(true, true, true); overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {};
+  manualMode = false; render(); closeSettings();
+  return out;
+});
+console.log('\n--- Settings → Generate (part by part) ---');
+check('Generate tab is in Settings', parts.tabShown);
+check('Weekdays only: no nights placed', parts.wdNoNights);
+check('Weekdays only: no weekend shifts placed', parts.wdNoWeekend);
+check('Weekdays only: weekday shifts placed', parts.wdHasDays);
+check('banner says partly generated + what is left', parts.bannerPartial);
+check('button reads Regenerate when ticked parts are done', parts.lblAfterWd === 'Regenerate', parts.lblAfterWd);
+check('button reads Generate when a new part is ticked', parts.lblNights === 'Generate', parts.lblNights);
+check('adding nights keeps the weekday grid', parts.nightsKeptWeekdays);
+check('adding nights: exactly 2 per night', parts.nights2);
+check('all three parts in: every RN on the 4/3 · 3/4 split', parts.allOnSplit);
+check('stored plan dropped once complete', parts.planDropped);
+check('banner back to normal checks once complete', parts.bannerFull);
+check('Undo restores the previous part state', parts.undoRestores);
+check('Clear wipes the part state', parts.clearWipes);
+check('nothing ticked: Generate changes nothing', parts.noneTicked);
+
+/* ---------------- 2c-bis. per-shift ticks (combine with the part ticks) ---------------- */
+const pshift = await page.evaluate(() => {
+  const ENTRY = new Set(['D6','D7','S8','S9','S10','N7','HOL','VAC','SL']);
+  const wk = (row, w) => row.slice(w*7, w*7+7).filter(x => ENTRY.has(x)).length;
+  const setAll = (parts, shifts) => { for (const p of ['weekdays','weekends','nights']) setGenPart(p, parts.includes(p));
+    for (const x of ['D6','D7','S8','S9','S10']) setGenPart(x, shifts.includes(x)); };
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {}; lockedCycles = {};
+  manualMode = true; cycleOffset = 0; seed = 777; render();
+  const out = {};
+  settTab('gen');
+  out.tickBoxes = ['D6','D7','S8','S9','S10'].every(x => !!document.getElementById('gpS_' + x));
+  setAll(['weekdays'], ['D6']); generateFortnight();                     // weekday D6 only
+  const cells = sched.sh.flat();
+  out.onlyD6 = cells.every(x => x === 'OFF' || x === 'D6') && cells.includes('D6');
+  out.statusSays = document.getElementById('genStatus').textContent.includes('Weekdays (D6)');
+  setAll(['weekdays','weekends','nights'], ['D7']); generateFortnight(); // D7: weekday + weekend turn, plus nights
+  out.d7Both = sched.sh.some(r => r.slice(0,5).includes('D7')) && [5,6].every(d => sched.sh.filter(r => r[d] === 'D7').length === 2);
+  out.noS = sched.sh.flat().every(x => !['S8','S9','S10'].includes(x));
+  setAll(['weekdays'], ['S8','S9','S10']); generateFortnight();          // the rest
+  out.complete = sched.sh.every((r, i) => wk(r, 0) === (groups[i]==='A'?4:3) && wk(r, 1) === (groups[i]==='A'?3:4))
+    && !genPlan[cycleStartISO(0)];
+  setAll(['weekdays','weekends','nights'], ['D6','D7','S8','S9','S10']);
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {}; manualMode = false; render(); closeSettings();
+  return out;
+});
+console.log('\n--- Settings → Generate (per shift) ---');
+check('a tick box for each day shift', pshift.tickBoxes);
+check('Weekdays + D6 fills only weekday D6', pshift.onlyD6);
+check('status names the partial units', pshift.statusSays);
+check('D7 fills weekday D7 and the weekend turn', pshift.d7Both);
+check('unticked evening shifts stay reserved', pshift.noS);
+check('ticking the rest completes every RN on the split', pshift.complete);
+
+/* ---------------- 2d. locked fortnight: view-only, immune to later changes ---------------- */
+const lock = await page.evaluate(() => {
+  const gridRows = () => [...document.querySelectorAll('#tbl tbody tr')].filter(r => r.querySelector('.rn-name'))
+    .map(r => r.textContent.replace(/\s+/g, ' ').trim());
+  overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {}; lockedCycles = {};
+  manualMode = false; cycleOffset = 0; seed = 4242; render();
+  const out = {};
+  const d0 = sched.days;
+  setFlag(rid(2), d0[3], true); setNote(rid(2), d0[3], 'kept note'); render();
+  const before = gridRows(), lockNames = order.map(i => names[i]), staffBefore = JSON.stringify(staffShifts);
+  toggleCycleLock();
+  out.btnLabel = document.getElementById('lockLbl').textContent;
+  out.bannerLocked = document.getElementById('banner').textContent.includes('locked');
+
+  // try to change everything
+  const exportRowsLocked = () => withLockedView(() => exportRows().rows.slice(1, 1 + N).map(r => r[0]));
+  names[order[0]] = 'RENAMED'; DAILY_MIN[0].D6 = 4; seed = 1;
+  overrides[isoKey(d0[4])] = { [rid(5)]: 'VAC' };
+  moveInOrder(0, 3);
+  removeRN(order[order.length - 1]);
+  render();
+  out.gridSame = JSON.stringify(gridRows()) === JSON.stringify(before);
+  out.nameKept = JSON.stringify([...document.querySelectorAll('#tbl .rn-name')].map(e => e.textContent)) === JSON.stringify(lockNames);
+  regen(); clearCycle(); generateFortnight(); freeNightTurn();
+  out.gridSameAfterActions = JSON.stringify(gridRows()) === JSON.stringify(before);
+  openCellM(0, 0); out.cellBlocked = !document.getElementById('cellModal').classList.contains('open');
+  setFlag(rid(1), d0[1], true); setStaffShift(staff[0].id, d0[1], 'D6');
+  out.flagBlocked = !isFlagged(rid(1), d0[1]) && JSON.stringify(staffShifts) === staffBefore;
+  out.exportSame = JSON.stringify(exportRowsLocked()) === JSON.stringify(lockNames);
+  out.flagShown = !!document.querySelector('#tbl .sh-cell.flagged');
+
+  // unlock: stays exactly as it was (for RNs still on the roster), editable again
+  window.__c = window.confirm; window.confirm = () => true;
+  const keptRows = gridRows();
+  toggleCycleLock();
+  window.confirm = window.__c;
+  const after = gridRows();
+  const byId = rows => Object.fromEntries(rows.map(t => [t.split(' ').slice(2, 16).join(' '), 1]));
+  out.unlockSameShifts = Object.keys(byId(after)).every(k => byId(keptRows)[k]);
+  out.unlockNote = noteFor(rid(2), d0[3]) === 'kept note';
+  openCellM(order[0], 0); out.cellOpensAfterUnlock = document.getElementById('cellModal').classList.contains('open'); closeCell();
+
+  undo();                                                   // undo the unlock -> locked again
+  out.undoRelocks = cycleLocked();
+
+  lockedCycles = {}; overrides = {}; flags = {}; notes = {}; frozen = {}; committedCycles = {}; DAILY_MIN[0].D6 = 2; render();
+  return out;
+});
+console.log('\n--- locked fortnight ---');
+check('Lock button reads Locked', lock.btnLabel === 'Locked', lock.btnLabel);
+check('banner says the fortnight is locked', lock.bannerLocked);
+check('rule, request, rename, reorder and removal leave it unchanged', lock.gridSame);
+check('locked names are the names at lock time', lock.nameKept);
+check('Regenerate / Clear / Generate / Free nights do nothing', lock.gridSameAfterActions);
+check('cells cannot be opened for editing', lock.cellBlocked);
+check('flags and support-staff shifts cannot change', lock.flagBlocked);
+check('exports show the locked record', lock.exportSame);
+check('flags made before locking still show', lock.flagShown);
+check('unlocking keeps every shift as it was', lock.unlockSameShifts);
+check('unlocking keeps comments', lock.unlockNote);
+check('cells are editable again after unlocking', lock.cellOpensAfterUnlock);
+check('Undo re-locks after an unlock', lock.undoRelocks);
+
+/* ---------------- 2e. request report (Requests window) ---------------- */
+const rreport = await page.evaluate(() => {
+  overrides = {}; notes = {}; lockedCycles = {}; frozen = {}; committedCycles = {}; manualMode = false; cycleOffset = 0; render();
+  openRequests();
+  const pick = (rn, type, days, why) => { document.getElementById('reqRn').value = String(rn);
+    document.getElementById('reqType').value = type; reqSelDays = new Set(days);
+    document.getElementById('reqReason').value = why || ''; reqAdd(); };
+  pick(order[2], 'REQ', [2, 3], 'Graduation');
+  pick(order[0], 'VAC', [7]);
+  pick(order[4], 'D6', [1], 'covering');                 // a requested duty: not time off
+  const out = {};
+  const rows = requestReportRows(reqOffset);
+  out.rows = rows.map(r => `${r.name}|${r.day}|${r.label}|${r.reason}`).join(';');
+  out.expected = [`${names[order[0]]}|Mon|Vacation|`, `${names[order[2]]}|Wed|Req off|Graduation`, `${names[order[2]]}|Thu|Req off|Graduation`].join(';');
+  out.reasonIsComment = noteFor(rid(order[2]), sched.days[2]) === 'Graduation';
+  out.boxCleared = document.getElementById('reqReason').value === '';
+  // locked: the report reads the record, so a later rename doesn't show
+  const was = names[order[2]]; toggleCycleLock(); names[order[2]] = 'LATER NAME';
+  out.lockedName = requestReportRows(0).some(r => r.name === was) && !requestReportRows(0).some(r => r.name === 'LATER NAME');
+  names[order[2]] = was; lockedCycles = {};
+  closeRequests(); overrides = {}; notes = {}; render();
+  return out;
+});
+console.log('\n--- request report ---');
+check('report lists time-off requests in RN order, with reasons', rreport.rows === rreport.expected, rreport.rows);
+check('the Reason box saves that day\'s comment', rreport.reasonIsComment);
+check('the Reason box clears after adding', rreport.boxCleared);
+check('a locked fortnight\'s report uses the locked names', rreport.lockedName);
+
+/* ---------------- 2f. undo history: compact, exact, and never a silent failed save ---------------- */
+const hist = await page.evaluate(() => {
+  const out = {};
+  const state = () => JSON.stringify(snapshot());
+  const reset = () => { overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; genDone = {}; genPlan = {}; lockedCycles = {};
+    flags = {}; notes = {}; staffShifts = {}; history = []; manualMode = false; cycleOffset = 0; seed = 5150; render(); saveState(); };
+  window.__c = window.confirm; window.confirm = () => true;
+  const edit = (i, d, v) => { openCellM(i, d); mSel = v; saveCell(); };
+  // an edit that is ALWAYS a change: Generate uses a random seed, so a cell may already
+  // hold the value typed — then nothing changes and (correctly) no undo step is recorded
+  const change = (i, d, v, alt) => edit(i, d, sched.sh[i][d] === v ? alt : v);
+
+  // (a) a varied run of actions, then undo all the way back — every step must match exactly
+  reset();
+  const steps = [state()];
+  const acts = [
+    () => change(3, 2, 'D6', 'D7'), () => change(3, 2, 'OFF', 'S8'), () => { setMode(true); generateFortnight(); },
+    () => change(5, 4, 'S9', 'S8'), () => toggleCycleLock(), () => toggleCycleLock(),
+    () => { openRequests(); document.getElementById('reqRn').value = String(order[2]); document.getElementById('reqType').value = 'VAC';
+            reqSelDays = new Set([8, 9]); document.getElementById('reqReason').value = 'why'; reqAdd(); closeRequests(); },
+    () => setHolBal(1, holBal[1] === 9 ? 8 : 9), () => moveInOrder(0, 4), () => removeRN(order[order.length - 1]),
+    () => { cycleOffset = 1; render(); generateFortnight(); }, () => clearCycle()
+  ];
+  for (const a of acts) { a(); steps.push(state()); }
+  out.recorded = history.length === acts.length;
+  out.sealed = history.slice(0, -1).every(e => e.d === 1) && !history[history.length - 1].d;
+  // half-way through, drop memory and reload from storage, as closing the tab would
+  let exact = true;
+  for (let k = acts.length - 1; k >= 0; k--) {
+    if (k === 6) { saveState(); history = []; loadState(); render(); }
+    undo(); if (state() !== steps[k]) { exact = false; out.firstMismatch = k; break; }
+  }
+  out.undoExact = exact;
+
+  // (b) size: 30 fortnights x 10 actions used to stop saving at fortnight 18
+  reset(); setMode(true);
+  let failed = false; const realSet = Storage.prototype.setItem;
+  Storage.prototype.setItem = function (k, v) { try { return realSet.call(this, k, v); } catch (e) { failed = true; throw e; } };
+  for (let n = 1; n <= 30; n++) { cycleOffset = n; render(); generateFortnight();
+    for (let q = 0; q < 8; q++) edit(q, (q * 3) % 14, q % 2 ? 'D6' : 'OFF');
+    toggleCycleLock(); }
+  Storage.prototype.setItem = realSet;
+  const raw = localStorage.getItem(STORE_KEY), saved = JSON.parse(raw);
+  out.noFailedSave = !failed && !saveFailed;
+  out.storageKb = Math.round(raw.length / 1024);
+  out.historyKb = Math.round(JSON.stringify(saved.history).length / 1024);
+  out.allThirtySaved = Object.keys(saved.lockedCycles).length === 30;
+  out.historyKept = saved.history.length;
+
+  // (c) history written by the previous version (full snapshots) is converted and still undoes exactly
+  reset();
+  const s0 = state(); const b1 = snapshot(); change(2, 1, 'D7', 'D6'); const s1 = state(); const b2 = snapshot(); change(4, 3, 'S8', 'S9');
+  const old = JSON.parse(localStorage.getItem(STORE_KEY));
+  old.history = [{ t: 1, label: 'old 1', snap: b1 }, { t: 2, label: 'old 2', snap: b2 }];      // old format: no deltas
+  localStorage.setItem(STORE_KEY, JSON.stringify(old));
+  history = []; loadState(); render();
+  out.legacyConverted = history.length === 2 && history.every(e => e.d === 1);
+  undo(); const m1 = state() === s1; undo(); out.legacyUndoExact = m1 && state() === s0;
+
+  // (d) a failed save is shown, and clears once saving works again
+  reset();
+  Storage.prototype.setItem = function () { throw new DOMException('full', 'QuotaExceededError'); };
+  edit(1, 1, 'D6');
+  out.warnShown = saveFailed === true && document.getElementById('saveWarn').hidden === false;
+  Storage.prototype.setItem = realSet;
+  edit(1, 1, 'OFF');
+  out.warnClears = saveFailed === false && document.getElementById('saveWarn').hidden === true;
+
+  // (e) nearly-full storage: the oldest undo steps go first, the data is still saved
+  reset(); for (let q = 0; q < 12; q++) change(q, 5, 'D6', 'D7');
+  const need = JSON.stringify(Object.assign(JSON.parse(localStorage.getItem(STORE_KEY)), { history: [] })).length;
+  Storage.prototype.setItem = function (k, v) { if (k === STORE_KEY && v.length > need + 1200) throw new DOMException('full', 'QuotaExceededError'); return realSet.call(this, k, v); };
+  const last = sched.sh[0][6] === 'S9' ? 'S8' : 'S9'; edit(0, 6, last);
+  Storage.prototype.setItem = realSet;
+  const kept = JSON.parse(localStorage.getItem(STORE_KEY));
+  out.trimsHistoryFirst = !saveFailed && kept.history.length < 13 && kept.overrides[isoKey(sched.days[6])][rid(0)] === last && history.length === kept.history.length;
+
+  window.confirm = window.__c; reset();
+  return out;
+});
+console.log('\n--- undo history & saving ---');
+check('every action is recorded; older entries are stored as deltas', hist.recorded && hist.sealed);
+check('undo is exact through 12 mixed actions and a reload', hist.undoExact, 'first mismatch at step ' + hist.firstMismatch);
+check('30 fortnights x 10 actions: no failed save', hist.noFailedSave);
+check('30 fortnights x 10 actions: all 30 on disk', hist.allThirtySaved);
+check('storage stays small (history < 1.6 MB, total < 2.5 MB)', hist.historyKb < 1600 && hist.storageKb < 2500, `history ${hist.historyKb} KB, total ${hist.storageKb} KB, ${hist.historyKept} entries`);
+check('history from the previous version is converted', hist.legacyConverted);
+check('converted history still undoes exactly', hist.legacyUndoExact);
+check('a failed save shows the red warning', hist.warnShown);
+check('the warning clears when saving works again', hist.warnClears);
+check('nearly-full storage: oldest undo steps dropped, data saved', hist.trimsHistoryFirst);
+
+/* ---------------- 2g. trust boundary: loaded data cannot inject into the page ---------------- */
+const inj = await page.evaluate(() => {
+  const out = {};
+  overrides = {}; frozen = {}; committedCycles = {}; lockedCycles = {}; genPlan = {}; genDone = {}; manualMode = false; cycleOffset = 0; render();
+  // a normal state must pass through the boundary unchanged
+  const d = sched.days, k0 = isoKey(d[0]);
+  overrides = { [k0]: { [rid(0)]: 'VAC' } }; notes = { [k0]: { [rid(0)]: 'a note' } }; flags = { [k0]: { [rid(1)]: true } };
+  setMode(true); generateFortnight(); toggleCycleLock(); setMode(false);
+  const good = JSON.stringify(cloudStateObj());
+  applyStateObject(JSON.parse(good)); render();
+  out.cleanStateUnchanged = JSON.stringify(cloudStateObj()) === good;
+  lockedCycles = {}; frozen = {}; committedCycles = {}; genDone = {}; overrides = {}; notes = {}; flags = {}; render();
+
+  // every field an attacker could reach through the cloud document or a backup file
+  const X = t => `<img src=x onerror="window.__inj_${t}=1">`, Q = t => `a',0);window.__inj_${t}=1;('`;
+  const bad = JSON.parse(JSON.stringify(cloudStateObj()));
+  bad.overrides = { [k0]: { [rid(0)]: X('cell') }, [Q('date')]: { [rid(1)]: 'D6' }, [isoKey(d[1])]: { [Q('oid')]: 'D6' } };
+  bad.staff = [{ id: Q('staff'), g: bad.staff[0].g, name: 'x' }, bad.staff[1]];
+  bad.staffShifts = { [k0]: { [bad.staff[1].id]: X('staffcell') } };
+  bad.ids = bad.ids.slice(); bad.ids[2] = Q('rnid'); bad.nightList = bad.ids.slice();
+  bad.holBal = bad.holBal.slice(); bad.holBal[0] = '"><img src=x onerror="window.__inj_bal=1">';
+  bad.dailyMin = JSON.parse(JSON.stringify(bad.dailyMin)); bad.dailyMin[0].D6 = '"><img src=x onerror="window.__inj_min=1">';
+  bad.customShifts = [{ code: 'E10', label: '<svg onload=window.__inj_lbl=1>', color: '#123456' }];
+  bad.frozen = { [isoKey(d[0])]: { [rid(3)]: Array(14).fill(X('frozen')) } };
+  bad.lockedCycles = { '2031-01-06': { at: X('at'), rns: [{ id: Q('lid'), name: 'n', g: 'A', row: [X('lrow')] }] } };
+  bad.startDate = X('date');
+  applyStateObject(bad); render();
+  openSettings(); for (const t of ['groups', 'night', 'min', 'shifts', 'staff', 'gen', 'data']) settTab(t); closeSettings();
+  openRequests(); closeRequests(); openCellM(0, 1); closeCell();
+  for (const el of document.querySelectorAll('#tbl td.sh-cell,#settModal button,#reqList button')) { const oc = el.getAttribute('onclick') || ''; if (oc.includes('__inj_')) { try { el.click(); } catch (e) {} } }
+  out.noInjectedElements = !document.querySelector('#tbl img, #settModal img, #settModal svg[onload], #reqModal img, #cellModal svg[onload]');
+  out.handlersClean = ![...document.querySelectorAll('[onclick],[onchange]')].some(el => /__inj_/.test(el.getAttribute('onclick') || '') || /__inj_/.test(el.getAttribute('onchange') || ''));
+  out.badValuesDropped = !JSON.stringify(cloudStateObj()).includes('__inj_');   // (the shift label is cut to 24 chars and only ever shown escaped)
+  out.labelShownAsText = customShifts.length === 1;       // the label is kept, but only ever rendered escaped
+  customShifts = []; rebuildShifts(); lockedCycles = {}; frozen = {}; overrides = {}; staffShifts = {}; nightList = null;
+  return out;
+});
+await page.waitForTimeout(250);
+inj.nothingRan = await page.evaluate(() => Object.keys(window).filter(k => k.startsWith('__inj_')).length === 0);
+await page.evaluate(() => { holBal = holBal.map(() => 14); ensureStaff(); render(); saveState(); });
+console.log('\n--- loaded data cannot inject into the page ---');
+check('a normal state passes the boundary unchanged', inj.cleanStateUnchanged);
+check('malformed values are dropped on load', inj.badValuesDropped);
+check('no injected element reaches the page', inj.noInjectedElements);
+check('no injected text reaches an inline handler', inj.handlersClean);
+check('no injected script ran', inj.nothingRan);
+
+/* ---------------- 3. stable ids: requests follow the nurse ---------------- */
+const idTest = await page.evaluate(() => {
+  const days = computeSchedule(0).days;
+  overrides = {}; seed = 4242;
+  const target = names[6];
+  overrides[isoKey(days[2])] = { [rid(6)]: 'VAC' };
+  render();
+  const before = sched.sh[6][2];
+  removeRN(0);                                   // delete a nurse ABOVE the requester
+  const i1 = names.indexOf(target);
+  const afterRemove = i1 >= 0 ? sched.sh[i1][2] : 'LOST';
+  addRN('B');                                    // and add one
+  const i2 = names.indexOf(target);
+  const afterAdd = i2 >= 0 ? sched.sh[i2][2] : 'LOST';
+  overrides = {}; render();
+  return { before, afterRemove, afterAdd };
+});
+console.log('\n--- requests bind to the nurse, not the row ---');
+check('request survives removing a nurse above it', idTest.afterRemove === 'VAC', 'got ' + idTest.afterRemove);
+check('request survives adding a nurse',            idTest.afterAdd === 'VAC',    'got ' + idTest.afterAdd);
+
+/* ---------------- 4. backup round-trip ---------------- */
+const backup = await page.evaluate(() => {
+  const days = computeSchedule(0).days;
+  names[0] = 'Backup Probe';
+  overrides = { [isoKey(days[2])]: { [rid(3)]: 'VAC' } };
+  render();
+  const saved = JSON.stringify({ app:'rn-rotating-schedule', version:1, state: cloudStateObj() });
+  names[0] = 'wiped'; overrides = {}; render();
+  applyStateObject(JSON.parse(saved).state); render();
+  const ok = names[0] === 'Backup Probe' && sched.sh[3][2] === 'VAC';
+  overrides = {}; names[0] = 'RN 1'; render();
+  return ok;
+});
+console.log('\n--- backup ---');
+check('export/import restores roster and requests', backup === true);
+
+/* ---------------- 4b. state registry round-trips (guards drift) ---------------- */
+const reg2 = await page.evaluate(() => {
+  const out = {};
+  // structural: every sync field must actually serialize into the cloud object
+  const cs = cloudStateObj();
+  out.missingFromCloud = PERSIST.filter(f => f.sync && !(f.k in cs)).map(f => f.k);
+
+  // behavioural: mutate a representative value in each kind of sync field, then
+  // serialize -> wipe -> applyStateObject. Anything the read side forgot to load
+  // fails to come back. This is exactly the class of bug the registry prevents.
+  const days = computeSchedule(0).days;
+  const PK = '2031-01-06';                       // a far-future fortnight key for the probes
+  flags = { [isoKey(days[1])]: { [rid(2)]: true } };
+  defHol = 9; defVac = 27;
+  DAILY_MIN[0].D6 = 5;
+  fatigue.maxNights = 3;
+  staffLabels = { AIDE: 'Probe Aids' };
+  overrides = { [isoKey(days[2])]: { [rid(3)]: 'VAC' } };
+  genParts = { weekdays: true, weekends: false, nights: false };
+  genDone = { [PK]: ['weekdays'] }; genPlan = { [PK]: { [rid(0)]: Array(14).fill('D6') } };
+  lockedCycles = { [PK]: { at: '2031-01-06T08:00:00.000Z', rns: [{ id: rid(0), name: 'Probe', g: 'A', row: Array(14).fill('N7') }] } };
+  const before = customShifts.length;
+  const saved = JSON.parse(JSON.stringify(cloudStateObj()));
+  // wipe every one
+  flags = {}; defHol = 14; defVac = 21; DAILY_MIN[0].D6 = 2;
+  fatigue.maxNights = 8; staffLabels = {}; overrides = {};
+  genParts = { weekdays: true, weekends: true, nights: true }; genDone = {}; genPlan = {}; lockedCycles = {};
+  applyStateObject(saved); render();
+  out.roundTrip = {
+    flags: !!(flags[isoKey(days[1])] && flags[isoKey(days[1])][rid(2)]),
+    defHol: defHol === 9, defVac: defVac === 27,
+    dailyMin: DAILY_MIN[0].D6 === 5,
+    fatigue: fatigue.maxNights === 3,
+    staffLabels: staffLabels.AIDE === 'Probe Aids',
+    overrides: sched.sh[3][2] === 'VAC',
+    customShifts: customShifts.length === before,
+    genParts: genParts.weekends === false && genParts.weekdays === true,
+    genDone: !!(genDone[PK] && genDone[PK][0] === 'weekdays'),
+    genPlan: !!(genPlan[PK] && genPlan[PK][rid(0)][3] === 'D6'),
+    lockedCycles: !!(lockedCycles[PK] && lockedCycles[PK].rns[0].name === 'Probe')
+  };
+
+  // undo round-trip: snapshot -> mutate -> restore reverts every undo field
+  overrides = {}; flags = {}; render();
+  const snap = snapshot();
+  flags = { [isoKey(days[4])]: { [rid(1)]: true } };
+  overrides = { [isoKey(days[5])]: { [rid(0)]: 'HOL' } };
+  restore(snap); render();
+  out.undoReverted = Object.keys(flags).length === 0 && Object.keys(overrides).length === 0;
+
+  // reset
+  genParts = { weekdays: true, weekends: true, nights: true }; genDone = {}; genPlan = {}; lockedCycles = {};
+  flags = {}; overrides = {}; defHol = 14; defVac = 21; DAILY_MIN[0].D6 = 2;
+  fatigue.maxNights = 8; staffLabels = {}; render();
+  return out;
+});
+console.log('\n--- state registry round-trips ---');
+check('every sync field serializes to the cloud object', reg2.missingFromCloud.length === 0, 'missing: ' + reg2.missingFromCloud.join(','));
+for (const [k, ok] of Object.entries(reg2.roundTrip))
+  check('sync field survives save->load: ' + k, ok === true);
+check('undo restores every field', reg2.undoReverted === true);
+
+/* ---------------- 4c. staff requests window (the cloud side is test/cloud.mjs) ---------------- */
+const sreq = await page.evaluate(() => {
+  const out = {};
+  const shown = id => !document.getElementById(id).hidden;
+  openStaffReq();                                   // opened offline: the window must say so, not break
+  out.offlineMsg = mgrUser === null && shown('sreqOff') && !shown('sreqMain') && !shown('sreqBadge');
+  mgrUser = { uid: 'audit', email: 'manager@example.test' }; sreqState = 'ready';   // as when signed in, no link yet
+  renderStaffReq();
+  out.signedIn = !shown('sreqOff') && shown('sreqMain') && shown('sreqSetup') && !shown('sreqLinkBox') &&
+    document.getElementById('sreqWho').textContent.includes('manager@example.test');
+  mgrUser = null; sreqState = 'idle'; renderStaffReq();
+  closeStaffReq();
+  // what arrives from the link is untrusted: sreqClean keeps only the expected shape
+  const stamp = { toMillis: () => 1794398400000 };
+  const good = sreqClean('Abc123', { rnId: rid(0), name: 'x', dates: '2026-12-03,2026-12-01,2026-12-02,2026-12-05', reason: 'exam', createdAt: stamp });
+  out.clean = !!good && good.dates.join() === '2026-12-01,2026-12-02,2026-12-03,2026-12-05' && good.done === false && good.at === 1794398400000;
+  out.label = good ? sreqDatesLabel(good.dates) : '';
+  out.rejects = [
+    sreqClean('bad id!', { rnId: rid(0), dates: '2026-12-01', reason: 'x' }),
+    sreqClean('Abc123', { rnId: '"><img>', dates: '2026-12-01', reason: 'x' }),
+    sreqClean('Abc123', { rnId: rid(0), dates: 'tomorrow', reason: 'x' }),
+    sreqClean('Abc123', { rnId: rid(0), dates: '2026-13-45', reason: 'x' }),
+    sreqClean('Abc123', null)
+  ].every(r => r === null);
+  const big = sreqClean('Abc123', { rnId: rid(0), name: 'n'.repeat(500), reason: 'r'.repeat(900), done: 'yes',
+    dates: Array.from({ length: 30 }, (_, i) => `2027-01-${String(i + 1).padStart(2, '0')}`).join(','), createdAt: 'now' });
+  out.bounded = !!big && big.name.length === 120 && big.reason.length === 300 && big.dates.length === 14 && big.done === false && big.at === 0;
+  out.gone = sreqName({ rnId: 'nobody', name: 'Old Name' });
+  return out;
+});
+console.log('\n--- staff requests window ---');
+check('without a connection the window explains itself', sreq.offlineMsg === true);
+check('signed in with no link yet, it offers to create one', sreq.signedIn === true);
+check('a received request is reduced to its expected shape', sreq.clean === true);
+check('consecutive days are labelled as a range', sreq.label === 'Tue 01 Dec – Thu 03 Dec, Sat 05 Dec 2026', sreq.label);
+check('malformed requests are dropped', sreq.rejects === true);
+check('oversized fields are cut to their limits', sreq.bounded === true);
+check('a request for someone no longer on the roster says so', sreq.gone === 'Old Name (no longer on the roster)', sreq.gone);
+
+/* ---------------- 4d. the banner checks nights against the N7 minimum (not a fixed 2) ---------------- */
+const nightMin = await page.evaluate(() => {
+  const out = {}, keep = JSON.stringify(DAILY_MIN);
+  manualMode = false; overrides = {}; frozen = {}; committedCycles = {}; cycleSeeds = {}; lockedCycles = {}; genDone = {}; genPlan = {};
+  for (const n of [1, 2, 3]) {
+    DAILY_MIN.forEach(m => { m.N7 = n; });
+    let bad = 0, wrongCount = 0;
+    for (let off = 0; off < 6; off++) {
+      const sh = computeSchedule(off).sh, cr = conflictReport(off, sh);
+      bad += cr.nightsShort.length + cr.nightsOver.length;
+      for (let d = 0; d < 14; d++) if (sh.filter(r => r[d] === 'N7').length !== n) wrongCount++;
+    }
+    out['min' + n] = { bad, wrongCount };
+  }
+  // N7 minimum 3: take one nurse off a night, and put an extra one on another
+  DAILY_MIN.forEach(m => { m.N7 = 3; });
+  const sh = computeSchedule(0).sh.map(r => r.slice());
+  sh[sh.findIndex(r => r[0] === 'N7')][0] = 'OFF';
+  sh[sh.findIndex(r => r[5] !== 'N7')][5] = 'N7';
+  const cr = conflictReport(0, sh);
+  out.short = JSON.stringify(cr.nightsShort); out.over = JSON.stringify(cr.nightsOver);
+  // weekday minimums that differ: one team of 3 covers the fortnight, a 2-minimum night with 3 is fine
+  DAILY_MIN.forEach((m, i) => { m.N7 = i === 0 ? 3 : 2; });
+  const mixed = conflictReport(0, computeSchedule(0).sh);
+  out.mixed = mixed.nightsShort.length + mixed.nightsOver.length;
+  cycleOffset = 0; DAILY_MIN.forEach(m => { m.N7 = 3; }); render();
+  out.bannerQuiet = !/off the N7 minimum|not covered by 2/.test(document.getElementById('banner').textContent);
+  DAILY_MIN = JSON.parse(keep); render();
+  return out;
+});
+console.log('\n--- night minimum in the banner ---');
+for (const n of [1, 2, 3])
+  check(`N7 minimum ${n}: every night has ${n} and none is reported`, nightMin['min' + n].bad === 0 && nightMin['min' + n].wrongCount === 0, JSON.stringify(nightMin['min' + n]));
+check('a night below the minimum is reported with its count and the minimum', nightMin.short === '[{"d":0,"c":2,"need":3}]', nightMin.short);
+check('a night above the night team is reported', nightMin.over === '[{"d":5,"c":4,"need":3}]', nightMin.over);
+check('differing weekday minimums raise no false alarm', nightMin.mixed === 0, String(nightMin.mixed));
+check('the banner is quiet about nights at a minimum of 3', nightMin.bannerQuiet === true);
+
+/* ---------------- 4e. lock screen (signing in itself is test/cloud.mjs) ---------------- */
+const lctx = await browser.newContext();
+await lctx.route(/^https?:\/\//, r => r.abort());
+await lctx.route(/\/vendor\/firebase-/, r => r.abort());
+const lpage = await lctx.newPage();
+lpage.on('pageerror', e => pageErrors.push('lock screen: ' + e));
+await lpage.goto(APP);
+const isLocked = () => lpage.evaluate(() => !document.getElementById('lockScreen').classList.contains('unlocked'));
+check('a device that has not signed in opens locked', await isLocked());
+check('no shared password is left in the page', await lpage.evaluate(() => typeof hashPw === 'undefined' && typeof PW_HASH === 'undefined' &&
+  !document.documentElement.innerHTML.includes('PW_HASH') && document.getElementById('lockEmail') !== null));
+await lpage.click('#lockGo');
+check('an empty sign-in is stopped', /email and password/i.test(await lpage.textContent('#lockErr')) && await isLocked());
+await lpage.fill('#lockEmail', 'someone@example.test');
+await lpage.fill('#pw1', 'anything');
+await lpage.click('#lockGo');
+check('with no connection nothing unlocks it', await isLocked() && /connect/i.test(await lpage.textContent('#lockErr')));
+check('it says the first sign-in needs the internet',
+  await lpage.waitForFunction(() => /first sign-in on this device needs/.test(document.getElementById('lockErr').textContent), null, { timeout: 12000 }).then(() => true, () => false) && await isLocked());
+await lpage.evaluate(() => sessionStorage.setItem('rn_unlocked', '1'));
+await lpage.reload();
+check('the old unlock flag no longer opens the app', await isLocked());
+await lctx.close();
+const unlockedOffline = await page.evaluate(() => document.getElementById('lockScreen').classList.contains('unlocked') && cloudStatus === 'unavailable' && cloudAuth === 'off');
+check('a signed-in device stays open offline, working from its own storage', unlockedOffline === true);
+
+/* ---------------- 4f. merging two devices' changes (the sync itself is test/cloud.mjs) ---------------- */
+const mrg = await page.evaluate(() => {
+  const out = {}, c = x => JSON.parse(JSON.stringify(x));
+  const base = { ids: ['a', 'b', 'c'], names: ['A', 'B', 'C'], groups: ['A', 'B', 'A'], holBal: [14, 14, 14], vacBal: [21, 21, 21], order: [0, 1, 2],
+    overrides: { '2031-01-06': { a: 'VAC' }, '2031-01-07': { b: 'HOL' } },
+    frozen: { '2031-01-06': { a: Array(14).fill('OFF'), b: Array(14).fill('OFF') } },
+    notes: {}, defHol: 14, nightList: ['a', 'b'] };
+  const run = (fm, ft) => { const m = c(base), t = c(base); fm(m); ft(t); const r = mergeState(c(base), m, t); return { s: r.state, n: r.clashes.length, txt: r.clashes.map(clashText) }; };
+  // different things: everything is kept, nothing is reported
+  let r = run(m => { m.overrides['2031-01-06'].b = 'SL'; m.overrides['2031-01-08'] = { a: 'REQ' }; m.frozen['2031-01-06'].a[2] = 'D6'; m.names[0] = 'Ann'; m.defHol = 15; },
+              t => { t.overrides['2031-01-06'].c = 'HOL'; t.overrides['2031-01-08'] = { c: 'REQ' }; t.frozen['2031-01-06'].a[9] = 'N7'; t.holBal[2] = 10; delete t.overrides['2031-01-07']; });
+  out.disjoint = r.n === 0 && JSON.stringify(r.s.overrides) === JSON.stringify({ '2031-01-06': { a: 'VAC', b: 'SL', c: 'HOL' }, '2031-01-08': { a: 'REQ', c: 'REQ' } }) &&
+    r.s.frozen['2031-01-06'].a[2] === 'D6' && r.s.frozen['2031-01-06'].a[9] === 'N7' && r.s.names[0] === 'Ann' && r.s.holBal[2] === 10 && r.s.defHol === 15;
+  // the same cell, differently: the saving device ("mine") wins and the clash is named
+  r = run(m => { m.overrides['2031-01-06'].a = 'SL'; m.frozen['2031-01-06'].b[0] = 'D7'; }, t => { t.overrides['2031-01-06'].a = 'HOL'; t.frozen['2031-01-06'].b[0] = 'S9'; });
+  out.clash = r.n === 2 && r.s.overrides['2031-01-06'].a === 'SL' && r.s.frozen['2031-01-06'].b[0] === 'D7';
+  out.clashTxt = r.txt.join(' | ');
+  // one side deleted what the other changed; both made the same change
+  r = run(m => { delete m.overrides['2031-01-06'].a; }, t => { t.overrides['2031-01-06'].a = 'HOL'; });
+  out.deleteWins = r.n === 1 && !('a' in (r.s.overrides['2031-01-06'] || {}));
+  r = run(m => { m.overrides['2031-01-07'].b = 'SL'; }, t => { t.overrides['2031-01-07'].b = 'SL'; });
+  out.sameChange = r.n === 0 && r.s.overrides['2031-01-07'].b === 'SL';
+  // an RN added on the other device while this one renamed: the roster arrays stay in step
+  const add = t => { t.ids.push('d'); t.names.push('D'); t.groups.push('B'); t.holBal.push(14); t.vacBal.push(21); t.order.push(3); };
+  r = run(m => { m.names[1] = 'Bea'; m.overrides['2031-01-07'].a = 'SL'; }, add);
+  const lens = k => r.s[k].length;
+  out.rosterTheirs = ['ids', 'names', 'groups', 'holBal', 'vacBal', 'order'].every(k => lens(k) === 4) && r.s.names[1] === 'B' && r.n === 1 && /roster list/.test(r.txt[0]) && r.s.overrides['2031-01-07'].a === 'SL';
+  r = run(add, t => { t.vacBal[0] = 5; });
+  out.rosterMine = ['ids', 'names', 'groups', 'holBal', 'vacBal', 'order'].every(k => r.s[k].length === 4) && r.s.vacBal[0] === 21 && r.n === 1;
+  r = run(add, t => { t.overrides['2031-01-06'].c = 'HOL'; });
+  out.rosterQuiet = r.n === 0 && r.s.names.length === 4 && r.s.overrides['2031-01-06'].c === 'HOL';
+  // lists that are not cell rows are taken whole
+  r = run(m => { m.nightList = ['a']; }, t => { t.nightList = ['a', 'b', 'c']; });
+  out.listWhole = r.n === 1 && JSON.stringify(r.s.nightList) === '["a"]';
+  // the clash log read back from the cloud is cut to shape
+  const log = cleanClashLog([{ id: 3, by: 'x', at: 1, n: 99, items: ['<img src=x onerror=alert(1)>', 7, 'y'.repeat(500)] }, { id: 'no' }, null, { id: 4, items: 'nope' }]);
+  out.logClean = log.length === 1 && log[0].items.length === 2 && log[0].items[1].length === 140;
+  noteClash(log[0], false);
+  out.noteSafe = !document.getElementById('syncNote').hidden && document.querySelectorAll('#syncNote img').length === 0 &&
+    document.getElementById('syncNoteBody').textContent.includes('<img src=x') && /and 97 more/.test(document.getElementById('syncNoteBody').textContent);
+  dismissSyncNote();
+  out.dismissed = document.getElementById('syncNote').hidden && document.getElementById('syncNoteBody').textContent === '';
+  out.keyOrder = stable({ b: 1, a: { d: 1, c: 2 } }) === stable({ a: { c: 2, d: 1 }, b: 1 });
+  return out;
+});
+console.log('\n--- merging two devices ---');
+check('changes to different cells, days and settings are all kept', mrg.disjoint === true);
+check('the same cell changed on both: the saving device wins, each clash is recorded', mrg.clash === true);
+check('a clash reads as "what was there → what was kept"', /HOL → SL/.test(mrg.clashTxt) && /S9 → D7/.test(mrg.clashTxt), mrg.clashTxt);
+check('deleting on the saving device beats a change on the other', mrg.deleteWins === true);
+check('the same change on both devices is not a clash', mrg.sameChange === true);
+check('an RN added elsewhere while renaming here: roster lists stay aligned, the rename is reported', mrg.rosterTheirs === true);
+check('an RN added here while balances changed elsewhere: this roster is kept whole', mrg.rosterMine === true);
+check('an RN added here and a request added elsewhere merge quietly', mrg.rosterQuiet === true);
+check('other lists are taken whole, never stitched', mrg.listWhole === true);
+check('the clash log from the cloud is cut to shape and shown as text', mrg.logClean === true && mrg.noteSafe === true && mrg.dismissed === true);
+check('comparing rosters ignores key order', mrg.keyOrder === true);
+
+/* ---------------- 4g. failures are visible; the security policy holds ---------------- */
+const vis = await page.evaluate(async () => {
+  const out = {}, box = document.getElementById('errNote'), body = () => document.getElementById('errNoteBody').textContent;
+  out.quietBefore = box.hidden && problems.length === 0;
+  // an exception nobody caught, and a promise nobody handled
+  setTimeout(() => { throw new Error('audit: uncaught <img src=x onerror=1>'); }, 0);
+  Promise.reject(Object.assign(new Error('audit: unhandled'), { code: 'audit/unhandled' }));
+  await new Promise(r => setTimeout(r, 150));
+  out.shown = !box.hidden && body().includes('audit: uncaught') && body().includes('audit/unhandled');
+  out.asText = document.querySelectorAll('#errNote img').length === 0 && body().includes('<img src=x');
+  noteProblem('same thing twice'); noteProblem('same thing twice');
+  out.noRepeat = problems.filter(p => p === 'same thing twice').length === 1;
+  for (let i = 0; i < 9; i++) noteProblem('flood ' + i);
+  out.capped = problems.length === 5;
+  dismissProblems();
+  out.dismissed = box.hidden && problems.length === 0 && body() === '';
+  // the security policy: an injected script from elsewhere, an eval, and a request to another site are all refused
+  const inj = document.createElement('script'); inj.src = 'https://evil.example/x.js'; document.head.appendChild(inj);
+  try { new Function('window.__evaled = 1')(); } catch (e) { out.evalThrew = true; }
+  out.fetchRefused = await fetch('https://evil.example/steal?d=roster').then(() => false, () => true);
+  new Image().src = 'https://evil.example/pixel.gif?d=roster';
+  await new Promise(r => setTimeout(r, 200));
+  out.noEval = window.__evaled === undefined && out.evalThrew === true;
+  out.cspReported = problems.filter(p => /stopped from loading or contacting/.test(p)).length >= 3;
+  out.cspText = problems.join(' || ');
+  dismissProblems();
+  // unreadable saved data: not swallowed, and the unreadable copy is kept
+  const key = STORE_KEY, good = localStorage.getItem(key);
+  localStorage.setItem(key, '{"names":["A"],"overrides":');           // cut off mid-write
+  loadState();
+  out.corruptTold = !box.hidden && /could not be read/.test(body());
+  out.corruptKept = localStorage.getItem(key + '_unreadable') === '{"names":["A"],"overrides":';
+  out.stillUsable = Array.isArray(names) && names.length >= 1 && ids.length === names.length;
+  localStorage.removeItem(key + '_unreadable'); localStorage.setItem(key, good); loadState(); render(); dismissProblems();
+  out.libs = typeof ExcelJS === 'object' && typeof jspdf === 'object' && typeof jspdf.jsPDF === 'function';
+  return out;
+});
+// the 3 violations provoked above are expected; they must be the only ones in the whole run
+const provoked = cspBlocked.filter(v => /evil\.example|eval/.test(v)).length;
+console.log('\n--- visible failures and the security policy ---');
+check('nothing was reported during the whole audit before this point', vis.quietBefore === true);
+check('an uncaught error and an unhandled promise both reach the red banner', vis.shown === true);
+check('what the banner shows is text, never markup', vis.asText === true);
+check('the same problem is listed once; the list is capped', vis.noRepeat === true && vis.capped === true);
+check('the banner can be dismissed', vis.dismissed === true);
+check('a script injected from another site is refused, and so is eval', vis.noEval === true);
+check('the page cannot send data to another site', vis.fetchRefused === true);
+check('blocked attempts are shown to the user, not hidden', vis.cspReported === true, vis.cspText);
+check('saved data that cannot be read is reported and set aside, not silently replaced', vis.corruptTold === true && vis.corruptKept === true && vis.stillUsable === true);
+check('the Excel and PDF libraries load from this site', vis.libs === true);
+
+/* ---------------- 4h. exports: the real Excel and PDF writers, under the security policy ---------------- */
+const fsx = await import('fs');
+async function grab(label, run) {
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }).catch(() => null), page.evaluate(run)]);
+  if (!dl) return { label, name: '(nothing was downloaded)', head: '', size: 0 };
+  const file = await dl.path(), buf = fsx.readFileSync(file);
+  return { label, name: dl.suggestedFilename(), head: buf.subarray(0, 4).toString('latin1'), size: buf.length };
+}
+await page.evaluate(() => { manualMode = false; cycleOffset = 0; render();
+  const k = cycleDayKeys(0); overrides[k[2]] = { [rid(1)]: 'REQ' }; notes[k[2]] = { [rid(1)]: 'exam' }; render(); });
+const files = [
+  await grab('roster Excel', () => { exportExcel(); }),
+  await grab('roster PDF', () => { exportPDF(); }),
+  await grab('request report Excel', () => { exportRequestReport(); }),
+  await grab('monthly report PDF', () => { openReport(); downloadReportPDF(); closeReport(); }),
+  await grab('fairness PDF', () => { openFairness(); downloadFairnessPDF(); document.getElementById('fairModal').classList.remove('open'); }),
+  await grab('backup', () => { exportBackup(); })
+];
+await page.evaluate(() => { overrides = {}; notes = {}; render(); });
+console.log('\n--- exports ---');
+const kinds = { 'roster Excel': ['.xlsx', 'PK\u0003\u0004'], 'roster PDF': ['.pdf', '%PDF'], 'request report Excel': ['.xlsx', 'PK\u0003\u0004'],
+  'monthly report PDF': ['.pdf', '%PDF'], 'fairness PDF': ['.pdf', '%PDF'], backup: ['.json', '{'] };
+for (const f of files) {
+  const [ext, magic] = kinds[f.label];
+  check(`${f.label} downloads as a real ${ext} file`, f.name.endsWith(ext) && f.head.startsWith(magic) && f.size > 200, `${f.name} · ${f.size} bytes · starts ${JSON.stringify(f.head)}`);
+}
+check('exporting raised no problem banner', await page.evaluate(() => document.getElementById('errNote').hidden && problems.length === 0));
+
+/* ---------------- 4i. the start date means the same day in every timezone (H1) ---------------- */
+async function datesIn(timezoneId) {
+  const c = await browser.newContext({ timezoneId });
+  await c.route(/^https?:\/\//, r => r.abort());
+  await c.route(/\/vendor\/firebase-/, r => r.abort());
+  await c.addInitScript(() => sessionStorage.setItem('rn_signed', '1'));
+  const pg = await c.newPage();
+  pg.on('pageerror', e => pageErrors.push(`${timezoneId}: ${e}`));
+  await pg.goto(APP);
+  await pg.waitForTimeout(400);
+  const r = await pg.evaluate(() => {
+    const si = document.getElementById('startDate');
+    si.value = '2026-11-09'; si.dispatchEvent(new Event('change', { bubbles: true })); si.dispatchEvent(new Event('input', { bubbles: true }));
+    startDateStr = '2026-11-09';
+    reqOffset = 0;
+    const off = autoOffset('2026-11-09', new Date(2026, 10, 18));         // Wed 18 Nov: still the first fortnight
+    cycleOffset = 0; render();
+    const head = [...document.querySelectorAll('#tbl thead th')].map(t => t.textContent).join(' ');
+    return { cycle: cycleDayKeys(0)[0], next: cycleDayKeys(1)[0], req: isoKey(reqDates()[0]), off, sunday: isoKey(getMonday(parseLocal('2026-11-15'))),
+      headFirst: /09\s*Nov/.test(head), period: typeof periodLabel === 'function' ? periodLabel() : '' };
+  });
+  await c.close();
+  return r;
+}
+const zones = {};
+for (const tz of ['America/Los_Angeles', 'America/New_York', 'UTC', 'Asia/Beirut', 'Pacific/Auckland']) zones[tz] = await datesIn(tz);
+console.log('\n--- start date across timezones ---');
+for (const [tz, r] of Object.entries(zones))
+  check(`${tz}: a roster starting Mon 9 Nov starts on 9 Nov, everywhere in the app`,
+    r.cycle === '2026-11-09' && r.next === '2026-11-23' && r.req === '2026-11-09' && r.off === 0 && r.sunday === '2026-11-09' && r.headFirst, JSON.stringify(r));
+check('every timezone agrees on the same days', new Set(Object.values(zones).map(r => r.cycle + r.next + r.req + r.period)).size === 1,
+  JSON.stringify(Object.fromEntries(Object.entries(zones).map(([k, r]) => [k, r.period]))));
+
+/* ---------------- 5. no runtime errors ---------------- */
+console.log('\n--- runtime ---');
+check('the app itself never trips the security policy, exports included', cspBlocked.length === provoked && provoked >= 3, cspBlocked.join(' | '));
+const realErrors = pageErrors.filter(e => !/audit: (uncaught|unhandled)/.test(e));
+check('no page errors', realErrors.length === 0, realErrors.join(' | '));
+
+await browser.close();
+console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) FAILED.`);
+process.exit(failures === 0 ? 0 : 1);

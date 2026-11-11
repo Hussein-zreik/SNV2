@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<!-- What this page may run and talk to. No inline handlers here, so the one inline
+     script is allowed by its checksum (test/vendor.test.mjs checks it and
+     `node test/vendor.test.mjs --write` updates it after an edit) and nothing else
+     inline can run. It may talk only to Google's API servers (the Firestore database). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-Woq5UV8BoX3BsRN66J2rNj7pWUfIKkTM404EFmxZ0Us='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://www.google.com; connect-src https://*.googleapis.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>Request a day off</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="vendor/firebase-app-compat.js" defer></script>
+<script src="vendor/firebase-firestore-compat.js" defer></script>
+<!--
+  Staff request page — the link a nurse manager sends to staff (request.html?f=<form id>).
+  A staff member picks their name, the day(s) they want off and a reason, and sends it.
+  It can only SEND a request off: firestore.rules lets this page read the form (the name
+  list) and create a request, never read, change or delete one. The manager reads them
+  in the main app (Staff requests). Everything shown here is set with textContent.
+-->
+<style>
+:root{
+  --font-sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --bg:#eef1f5;--panel:#ffffff;--panel-2:#f4f6f9;--field:#ffffff;--field-2:#e9edf3;
+  --border:#dde2ea;--border-2:#c7cedb;--border-3:#a9b2c2;
+  --text:#171b22;--text-strong:#0b0e13;--text-2:#333b47;--muted-2:#5a6472;--muted-3:#69737f;
+  --accent:#1668b8;--accent-bg:#e6f0fa;--accent-border:#a9cdec;--accent-bg-h:#d6e7f7;
+  --pos:#1a7a45;--pos-bg:#e3f3ea;--pos-border:#a8d6bd;
+  --warn:#8a5200;--warn-bg:#faecc7;--warn-border:#e6cf8f;
+  --neg:#bd2b2b;--neg-bg:#fadede;--neg-border:#eeb4b4;
+  --req-bg:#e9c4dc;--req-fg:#7a2c58;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}
+.wrap{max-width:600px;margin:0 auto;padding:16px 14px 40px}
+.card{background:var(--panel);border:1px solid var(--border-2);border-radius:12px;padding:18px 16px;box-shadow:0 1px 2px rgba(20,30,50,.08)}
+h1{font-size:20px;margin:0 0 2px;color:var(--text-strong)}
+.sub{color:var(--muted-2);font-size:13px;margin-bottom:14px}
+.badge{display:inline-block;padding:2px 8px;border-radius:6px;background:var(--req-bg);color:var(--req-fg);font-family:var(--font-mono);font-size:12px;font-weight:600}
+label.lbl{display:block;font-size:13px;font-weight:600;color:var(--text-2);margin:14px 0 6px}
+.hint{font-weight:400;color:var(--muted-3)}
+select,textarea{width:100%;background:var(--field);color:var(--text);border:1px solid var(--border-2);border-radius:8px;padding:11px 10px;font-size:16px;font-family:var(--font-sans)}
+select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+textarea{resize:vertical;min-height:76px}
+.nav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
+.nav .range{font-family:var(--font-mono);font-weight:600;font-size:14px;color:var(--text-strong);text-align:center;flex:1}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--field);border:1px solid var(--border-3);border-radius:8px;padding:0 14px;min-height:44px;font-size:15px;font-weight:500;cursor:pointer;color:var(--text);font-family:var(--font-sans)}
+.btn:hover{background:var(--field-2)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;width:100%;min-height:50px;font-size:16px;margin-top:16px}
+.btn.primary:hover{background:#125a9f}
+.btn.icon{min-width:44px;padding:0}
+.days{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.day{padding:8px 2px;min-height:54px;border:1px solid var(--border-2);border-radius:8px;background:var(--field);cursor:pointer;text-align:center;font-family:var(--font-mono);color:var(--text-2)}
+.day .dn{display:block;font-size:11px;color:var(--muted-2);font-family:var(--font-sans);font-weight:500}
+.day .dt{display:block;font-size:13px;font-weight:600;margin-top:2px}
+.day.wknd .dn{color:var(--warn)}
+.day.sel{border-color:var(--accent);background:var(--accent-bg);color:var(--accent)}
+.day.sel .dn{color:var(--accent)}
+.day[disabled]{opacity:.38;cursor:not-allowed;background:var(--panel-2)}
+.picked{font-size:13px;color:var(--muted-2);margin-top:8px;min-height:20px}
+.count{float:right;font-weight:400;color:var(--muted-3);font-family:var(--font-mono);font-size:12px}
+.msg{border-radius:8px;padding:11px 12px;font-size:14px;margin-top:14px;border:1px solid}
+.msg.ok{background:var(--pos-bg);border-color:var(--pos-border);color:var(--pos)}
+.msg.warn{background:var(--warn-bg);border-color:var(--warn-border);color:var(--warn)}
+.msg.bad{background:var(--neg-bg);border-color:var(--neg-border);color:var(--neg)}
+.note{font-size:12.5px;color:var(--muted-2);margin-top:12px}
+.sent{margin-top:16px}
+.sent h2{font-size:14px;margin:0 0 6px;color:var(--text-strong)}
+.sent ul{list-style:none;margin:0;padding:0}
+.sent li{font-size:13px;padding:8px 0;border-top:1px solid var(--border);color:var(--text-2)}
+.sent li .when{display:block;color:var(--muted-3);font-size:12px;font-family:var(--font-mono)}
+.center{text-align:center;padding:26px 8px}
+.center .big{font-size:34px;line-height:1;margin-bottom:10px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- loading / problem states -->
+  <div class="card center" id="vLoading"><div class="big">⏳</div><div>Loading…</div></div>
+  <div class="card center" id="vInvalid" hidden><div class="big">🔗</div><h1>This link is not valid</h1><div class="sub">Ask your nurse manager to send you the request link again.</div></div>
+  <div class="card center" id="vClosed" hidden><div class="big">🔒</div><h1>Requests are closed</h1><div class="sub">Your nurse manager has paused this link. Contact them directly if it is urgent.</div></div>
+  <div class="card center" id="vOffline" hidden><div class="big">📡</div><h1>Could not connect</h1><div class="sub">Check your internet connection, then try again.</div><button class="btn" id="retryBtn" type="button">Try again</button></div>
+
+  <!-- the form -->
+  <div class="card" id="vForm" hidden>
+    <h1>Request a day off</h1>
+    <div class="sub"><span id="wardTitle"></span> <span class="badge">Req off</span></div>
+
+    <label class="lbl" for="who">Your name</label>
+    <select id="who"><option value="">Choose your name…</option></select>
+
+    <label class="lbl" id="daysLbl">Day(s) you want off <span class="hint">— tap to select, from tomorrow onward</span></label>
+    <div class="nav">
+      <button class="btn icon" id="prevBtn" type="button" aria-label="Previous two weeks">‹</button>
+      <div class="range" id="range" aria-live="polite"></div>
+      <button class="btn icon" id="nextBtn" type="button" aria-label="Next two weeks">›</button>
+    </div>
+    <div class="days" id="days" role="group" aria-labelledby="daysLbl"></div>
+    <div class="picked" id="picked" aria-live="polite"></div>
+
+    <label class="lbl" for="reason">Reason <span class="count" id="reasonCount">0 / 300</span></label>
+    <textarea id="reason" maxlength="300" placeholder="e.g. medical appointment · child's school event · exam"></textarea>
+
+    <div class="msg bad" id="err" role="alert" hidden></div>
+    <div class="msg warn" id="slow" role="status" hidden>This is taking longer than usual. Check your internet connection and keep this page open — it will send as soon as you are back online.</div>
+    <div class="msg ok" id="done" role="status" hidden></div>
+
+    <button class="btn primary" id="sendBtn" type="button">Send request</button>
+    <div class="note">A request is not an approval. Your nurse manager reviews every request and will confirm the roster. Only your manager can read your reason.</div>
+
+    <div class="sent" id="sentBox" hidden>
+      <h2>Sent from this device</h2>
+      <ul id="sentList"></ul>
+    </div>
+  </div>
+</div>
+
+<script>
+const firebaseConfig={
+  apiKey:"AIzaSyCVo5fHRCzbwcM1_KtS_JC36iDpiNTgr84",
+  authDomain:"schedule-nursing-f14e5.firebaseapp.com",
+  projectId:"schedule-nursing-f14e5",
+  storageBucket:"schedule-nursing-f14e5.firebasestorage.app",
+  messagingSenderId:"878601839531",
+  appId:"1:878601839531:web:f6c3d2e92ae0c80d1fa8ee"
+};
+const MAX_DAYS=14,MAX_REASON=300;
+const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const $=id=>document.getElementById(id);
+const formId=(new URL(location.href).searchParams.get('f')||'').trim();
+const SENT_KEY='rn_req_sent_'+formId,ME_KEY='rn_req_me_'+formId;
+
+let db=null,form=null;         // form: {title, anchor(Date), people:[{id,name}]}
+let viewOff=0,minOff=0;        // fortnight on screen / the one containing tomorrow
+const picked=new Set();        // ISO dates chosen (kept while browsing fortnights)
+let sending=false;
+
+/* ---------- dates: local calendar days, never UTC ---------- */
+const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const fromIso=s=>{const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s));return m?new Date(+m[1],+m[2]-1,+m[3]):null;};
+const plusDays=(d,n)=>{const r=new Date(d);r.setDate(r.getDate()+n);return r;};
+const monday=d=>{const r=new Date(d);const w=r.getDay();r.setDate(r.getDate()+(w===0?-6:1-w));r.setHours(0,0,0,0);return r;};
+const today=()=>{const t=new Date();t.setHours(0,0,0,0);return t;};
+const fmt=d=>d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+const fmtLong=d=>`${DAYS[(d.getDay()+6)%7]} ${fmt(d)}`;
+const dayDiff=(a,b)=>Math.round((a-b)/86400000);
+
+function show(id){for(const v of ['vLoading','vInvalid','vClosed','vOffline','vForm'])$(v).hidden=(v!==id);}
+
+/* ---------- load the form (the name list) ---------- */
+function start(tries){
+  if(!/^[A-Za-z0-9]{20,40}$/.test(formId)){show('vInvalid');return;}
+  if(!window.firebase||!window.firebase.firestore){            // SDK still loading (deferred)
+    if((tries||0)<80){setTimeout(()=>start((tries||0)+1),150);return;}
+    show('vOffline');return;
+  }
+  try{ if(!firebase.apps.length)firebase.initializeApp(firebaseConfig); db=firebase.firestore(); }
+  catch(e){ show('vOffline');return; }
+  loadForm();
+}
+function loadForm(){
+  show('vLoading');
+  let settled=false;
+  const giveUp=setTimeout(()=>{if(!settled){settled=true;show('vOffline');}},12000);
+  db.collection('requestForms').doc(formId).get().then(snap=>{
+    if(settled)return; settled=true; clearTimeout(giveUp);
+    const d=snap.exists?snap.data():null;
+    if(!d||!Array.isArray(d.ids)||!Array.isArray(d.names)){show('vInvalid');return;}
+    if(d.open!==true){show('vClosed');return;}
+    const people=[];
+    for(let i=0;i<d.ids.length&&i<200;i++){
+      const id=String(d.ids[i]||''),name=String(d.names[i]==null?'':d.names[i]).trim().slice(0,120);
+      if(/^[A-Za-z0-9_-]{1,40}$/.test(id)&&name)people.push({id,name});
+    }
+    if(!people.length){show('vInvalid');return;}
+    form={title:String(d.title||'').slice(0,60),anchor:monday(fromIso(d.anchor)||today()),people};
+    render();
+  }).catch(()=>{ if(settled)return; settled=true; clearTimeout(giveUp); show('vOffline'); });
+}
+
+/* ---------- the form ---------- */
+function render(){
+  $('wardTitle').textContent=form.title||'Nursing roster';
+  const sel=$('who');
+  while(sel.options.length>1)sel.remove(1);
+  for(const p of form.people){const o=document.createElement('option');o.value=p.id;o.textContent=p.name;sel.appendChild(o);}
+  let me='';try{me=localStorage.getItem(ME_KEY)||'';}catch(e){/* private mode: nothing remembered */}
+  if(form.people.some(p=>p.id===me))sel.value=me;
+  // fortnights line up with the manager's roster; never show one that is wholly in the past
+  minOff=Math.floor(dayDiff(plusDays(today(),1),form.anchor)/14);
+  viewOff=minOff;
+  renderDays();renderSent();
+  show('vForm');
+}
+function renderDays(){
+  const base=plusDays(form.anchor,viewOff*14),t=today(),box=$('days');
+  $('range').textContent=`${fmt(base)} – ${fmt(plusDays(base,13))} ${plusDays(base,13).getFullYear()}`;
+  $('prevBtn').disabled=viewOff<=minOff;
+  box.textContent='';
+  for(let i=0;i<14;i++){
+    const d=plusDays(base,i),k=iso(d),b=document.createElement('button');
+    b.type='button';b.className='day'+(i%7>=5?' wknd':'')+(picked.has(k)?' sel':'');
+    b.disabled=d<=t;                                    // tomorrow onward only
+    b.setAttribute('aria-pressed',picked.has(k)?'true':'false');
+    b.setAttribute('aria-label',fmtLong(d));
+    const dn=document.createElement('span');dn.className='dn';dn.textContent=DAYS[i%7];
+    const dt=document.createElement('span');dt.className='dt';dt.textContent=fmt(d);
+    b.appendChild(dn);b.appendChild(dt);
+    b.addEventListener('click',()=>toggleDay(k));
+    box.appendChild(b);
+  }
+  const list=[...picked].sort();
+  $('picked').textContent=list.length?`${list.length} day${list.length>1?'s':''} selected: ${list.map(k=>fmtLong(fromIso(k))).join(', ')}`:'No days selected yet.';
+}
+function toggleDay(k){
+  if(sending)return;
+  if(picked.has(k))picked.delete(k);
+  else{
+    if(picked.size>=MAX_DAYS){fail(`You can ask for up to ${MAX_DAYS} days in one request.`);return;}
+    picked.add(k);
+  }
+  clearMsgs();renderDays();
+}
+function clearMsgs(){$('err').hidden=true;$('done').hidden=true;$('slow').hidden=true;}
+function fail(text){$('done').hidden=true;$('slow').hidden=true;const e=$('err');e.textContent=text;e.hidden=false;}
+
+/* ---------- send ---------- */
+function send(){
+  if(sending)return;
+  clearMsgs();
+  const who=form.people.find(p=>p.id===$('who').value),reason=$('reason').value.trim();
+  const dates=[...picked].sort().filter(k=>fromIso(k)>today());
+  if(!who){fail('Choose your name first.');$('who').focus();return;}
+  if(!dates.length){fail('Tap at least one day you want off.');return;}
+  if(!reason){fail('Add a short reason so your manager can decide.');$('reason').focus();return;}
+  sending=true;
+  const btn=$('sendBtn');btn.disabled=true;btn.textContent='Sending…';
+  // an offline write waits instead of failing, so say so rather than appear stuck
+  const slow=setTimeout(()=>{if(sending)$('slow').hidden=false;},9000);
+  db.collection('requestForms').doc(formId).collection('requests').add({
+    rnId:who.id,name:who.name,dates:dates.join(','),reason:reason.slice(0,MAX_REASON),
+    createdAt:firebase.firestore.FieldValue.serverTimestamp()
+  }).then(()=>{
+    clearTimeout(slow);sending=false;btn.disabled=false;btn.textContent='Send request';
+    try{localStorage.setItem(ME_KEY,who.id);}catch(e){/* private mode */}
+    remember(who.name,dates);
+    picked.clear();$('reason').value='';updateCount();renderDays();renderSent();
+    $('slow').hidden=true;
+    const ok=$('done');ok.textContent=`Request sent ✓  ${who.name}: ${dates.map(k=>fmtLong(fromIso(k))).join(', ')}. Your manager will see it.`;ok.hidden=false;
+    ok.scrollIntoView({block:'nearest'});
+  }).catch(()=>{
+    clearTimeout(slow);sending=false;btn.disabled=false;btn.textContent='Send request';
+    fail('Your request was NOT sent. Requests may have been closed, or the staff list changed. Reload this page and try again, or contact your manager.');
+  });
+}
+// a record on this device only (dates and time — never the reason)
+function remember(name,dates){
+  try{
+    const a=JSON.parse(localStorage.getItem(SENT_KEY)||'[]');
+    a.unshift({name,dates,at:Date.now()});
+    localStorage.setItem(SENT_KEY,JSON.stringify(a.slice(0,20)));
+  }catch(e){/* private mode: nothing kept */}
+}
+function renderSent(){
+  let a=[];try{a=JSON.parse(localStorage.getItem(SENT_KEY)||'[]');}catch(e){a=[];}
+  if(!Array.isArray(a))a=[];
+  const ul=$('sentList');ul.textContent='';
+  for(const r of a){
+    if(!r||!Array.isArray(r.dates))continue;
+    const li=document.createElement('li');
+    li.textContent=`${String(r.name||'')}: ${r.dates.map(k=>fromIso(k)).filter(Boolean).map(fmtLong).join(', ')}`;
+    const w=document.createElement('span');w.className='when';
+    const t=new Date(r.at);w.textContent=isNaN(t)?'':`sent ${fmt(t)} ${t.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`;
+    li.appendChild(w);ul.appendChild(li);
+  }
+  $('sentBox').hidden=!ul.children.length;
+}
+function updateCount(){$('reasonCount').textContent=`${$('reason').value.length} / ${MAX_REASON}`;}
+
+$('prevBtn').addEventListener('click',()=>{if(viewOff>minOff){viewOff--;renderDays();}});
+$('nextBtn').addEventListener('click',()=>{viewOff++;renderDays();});
+$('reason').addEventListener('input',()=>{updateCount();$('err').hidden=true;});
+$('who').addEventListener('change',()=>{$('err').hidden=true;});
+$('sendBtn').addEventListener('click',send);
+$('retryBtn').addEventListener('click',()=>{if(db)loadForm();else{show('vLoading');start(0);}});
+start(0);
+</script>
+</body>
+</html>

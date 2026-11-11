@@ -1,0 +1,8 @@
+node_modules/
+*.png
+*.pdf
+*.xlsx
+# throwaway diagnostic scripts (test/audit.mjs is the committed suite)
+_*.mjs
+# Firebase emulator logs (npm run test:cloud)
+*-debug.log
