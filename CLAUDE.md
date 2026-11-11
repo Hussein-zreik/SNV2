@@ -15,8 +15,8 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 npm install            # devDependencies only; the app's own libraries are checked in under vendor/
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
 npm run test:unit      # 54 engine unit tests (twice: local time + Los Angeles) + 27 vendor/policy checks, ~2s
-npm test               # 178 checks driving the app in headless Chromium, ~70s
-npm run test:cloud     # 170 checks of firestore.rules, sign-in, roster sync + the staff link, in the
+npm test               # 183 checks driving the app in headless Chromium, ~70s
+npm run test:cloud     # 176 checks of firestore.rules, sign-in, roster sync + the staff link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
 
@@ -324,6 +324,12 @@ There is no shared password and no anonymous sign-in; do not reintroduce either.
 - **No save before the first read:** `cloudSave`/`pushCloud` do nothing until
   `rosterReady`. Offline, a save fails, the status reads "Not sent yet", and it is
   retried on a timer and on the browser's `online` event.
+- **Size (audit H2).** The roster is one document and Firestore refuses one over 1 MiB
+  (~144 KB a year with every fortnight locked). `noteDocSize()` measures each document
+  sent or received; the Cloud window shows a meter, amber at 70%, red at 90% (plus one
+  problem banner). `pushCloud` never sends a document within 4 KB of the limit: the save
+  stays on the device, the status reads **Cloud full** and the banner says so. The real
+  fix when that day comes is archiving old fortnights out of the document.
 - **`probeRules()`** asks for a roster that is not ours. Refused → `cloudSecure=true`;
   answered → the Cloud window says the database is NOT secured. This is how the app
   can tell whether the rules were published; never replace it with an assumption.

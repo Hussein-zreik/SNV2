@@ -11,7 +11,7 @@
      (Firebase sign-in and the roster), so a script that got onto the page could not
      send the roster anywhere else. apis.google.com and the firebaseapp.com frame are
      what Firebase sign-in loads on phones. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-2FBZe78M7fknPKfPaPR/HiS0NTajAbr5oZUwguJvHAo=' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-s83zv/Be85GS6P/bsCq3Ec7mq8rjwScanH4O224GBSc=' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RN Rotating Schedule</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -166,6 +166,12 @@ input[type=date]:focus{border-color:var(--border-3)}
 .gp-shift{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);cursor:pointer}
 .gp-shift .gp-sub{color:var(--muted-2);font-size:var(--fs-xs)}
 .banner[hidden]{display:none}
+.csize{font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)}
+.csize[hidden]{display:none}
+.csize-bar{height:6px;border-radius:3px;background:var(--field-2);overflow:hidden;margin:2px 0 4px}
+.csize-bar span{display:block;height:100%;width:0;background:var(--pos)}
+.csize.warn .csize-bar span{background:var(--warn)}.csize.warn #cloudSizeMsg{color:var(--warn)}
+.csize.bad .csize-bar span{background:var(--neg)}.csize.bad #cloudSizeMsg{color:var(--neg);font-weight:500}
 #syncNote ul,#errNote ul{margin:4px 0 4px 18px;padding:0;font-family:var(--font-mono);font-size:var(--fs-xs)}
 #syncNote .bhint{font-size:var(--fs-xs)}
 .banner.bad{background:var(--hol-bg);border-color:var(--hol-bd);color:var(--hol-fg)}
@@ -928,7 +934,8 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
   <div class="modal">
     <h3>Cloud sync</h3>
     <div id="cloudStatusMsg" style="font-size:var(--fs-sm);color:var(--text-2);margin-bottom:var(--sp-2);line-height:var(--lh-normal)"></div>
-    <div id="cloudSecureMsg" style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-4);line-height:var(--lh-normal)"></div>
+    <div id="cloudSecureMsg" style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:var(--sp-2);line-height:var(--lh-normal)"></div>
+    <div id="cloudSize" class="csize" hidden><div class="csize-bar"><span id="cloudSizeFill"></span></div><div id="cloudSizeMsg"></div></div>
     <div id="legacyBox">
       <div class="slbl">Old shared copy (unit code)</div>
       <div style="font-size:var(--fs-xs);color:var(--muted-2);margin-bottom:6px;line-height:var(--lh-normal)">Before sign-in, the roster was shared under a unit code that anyone could use. Check whether a copy is still stored there, then delete it.</div>
@@ -1634,6 +1641,27 @@ const stable=v=>JSON.stringify(v,(k,x)=>isObj(x)?Object.keys(x).sort().reduce((o
 const mineStr=()=>stable(cloudStateObj());
 const DEVICE_ID=(()=>{try{let d=localStorage.getItem('rn_device');if(!d){d=newId();localStorage.setItem('rn_device',d);}return d;}catch(e){return newId();}})();
 let syncBaseStr=null,rosterReady=false,pushing=false,pushAgain=false,pendingRemote=null,retryTimer=null;
+/* ---- how big the cloud roster is (audit H2) ---- */
+// The whole roster is one Firestore document, and Firestore refuses a document over
+// 1 MiB. It grows ~144 KB a year with every fortnight locked, so the limit is years
+// away — but when it comes, saves would fail. The Cloud window shows the size, warns at
+// 70% and again at 90%, and a save that would not fit is never sent: it stays on this
+// device and the red banner says why. JSON bytes slightly overstate Firestore's own
+// count, so the warnings come a little early, never late.
+const DOC_LIMIT=1048576,DOC_WARN=0.7,DOC_BAD=0.9;
+let cloudBytes=0,cloudBytesTop=[],cloudSizeWarned=0;
+const docBytes=o=>new TextEncoder().encode(JSON.stringify(o)).length;
+function noteDocSize(doc){
+  cloudBytes=docBytes(doc);
+  const st=isObj(doc&&doc.state)?doc.state:{};
+  cloudBytesTop=Object.keys(st).map(k=>[k,docBytes(st[k])]).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const level=cloudBytes>=DOC_LIMIT*DOC_BAD?2:cloudBytes>=DOC_LIMIT*DOC_WARN?1:0;
+  if(level===2&&cloudSizeWarned<2)
+    noteProblem(`The cloud roster is ${sizeText(cloudBytes)} of the 1 MB Firestore allows. Saves will stop working when it is full: export a backup and ask for old fortnights to be archived`);
+  cloudSizeWarned=Math.max(cloudSizeWarned,level);
+}
+const sizeText=b=>b>=1048576?(b/1048576).toFixed(2)+' MB':Math.max(1,Math.round(b/1024))+' KB';
+const SIZE_PARTS={lockedCycles:'locked fortnights',frozen:'generated fortnights',genPlan:'partly generated plans',overrides:'requests and entries',notes:'comments',staffShifts:'support-staff shifts',history:'history',flags:'flags'};
 function rosterKnown(uid){try{return localStorage.getItem('rn_roster_uid')===uid;}catch(e){return false;}}
 function loadBase(uid){syncBaseStr=null;try{if(rosterKnown(uid))syncBaseStr=localStorage.getItem('rn_base');}catch(e){}}
 function setBase(state,uid){
@@ -1762,6 +1790,7 @@ function connectRoster(uid){
 }
 // the account's roster arrived (first load, or another device saved)
 function onRemote(uid,d){
+  noteDocSize(d);
   const theirs=d.state,rev=Number.isInteger(d.rev)?d.rev:0;
   const same=stable(theirs)===mineStr();
   if(!rosterKnown(uid)){                         // first time this device meets this account's roster
@@ -1835,8 +1864,10 @@ function pushCloud(){
       const items=[...new Set(clashes.map(clashText))];
       entry={id:rev,by:DEVICE_ID,at:Date.now(),n:items.length,items:items.slice(0,12)};log.push(entry);
     }
-    tx.set(ref,{state,updatedAt:Date.now(),rev,clashes:log.slice(-5)});
-    return {state,rev,entry};
+    const doc={state,updatedAt:Date.now(),rev,clashes:log.slice(-5)};
+    if(docBytes(doc)>DOC_LIMIT-4096)throw Object.assign(new Error('roster too large for one cloud document'),{code:'snv2/too-large',doc});
+    tx.set(ref,doc);
+    return {state,rev,entry,doc};
   })).then(r=>{
     pushing=false;
     if(uid!==cloudUid)return;
@@ -1844,7 +1875,7 @@ function pushCloud(){
     // is replayed on top of it, then goes up with the next save.
     const now=clone(cloudStateObj());
     const next=stable(now)===myStr?r.state:mergeState(mine,now,r.state).state;
-    setBase(r.state,uid);
+    setBase(r.state,uid);noteDocSize(r.doc);
     if(stable(next)!==stable(now))adoptCloudState(next,'');
     if(r.entry)noteClash(r.entry,true);
     markClashSeen(uid,r.rev);
@@ -1856,6 +1887,11 @@ function pushCloud(){
     pushing=false;
     if(uid!==cloudUid)return;
     const code=(e&&e.code)||'',offline=code==='unavailable'||navigator.onLine===false;
+    if(code==='snv2/too-large'){
+      noteDocSize(e.doc);cloudStatus='full';updateCloudUI();
+      noteProblem(`The roster no longer fits in the cloud (${sizeText(cloudBytes)}; Firestore allows 1 MB). Your changes are kept on this device but are NOT being sent to your account. Export a backup now`);
+      return;
+    }
     if(!offline)console.error('cloud push failed',e);
     cloudStatus=offline?'waiting':'error';updateCloudUI();
     // offline, or lost a race with another device: the change is still on this device — try again
@@ -1868,7 +1904,7 @@ window.addEventListener('offline',()=>updateCloudUI());
 function updateCloudUI(){
   const b=document.getElementById('cloudBtn'); if(!b)return;
   const cloud='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 18 18z"/></svg>';
-  const map={off:['Cloud',''],connecting:['Syncing…','warn'],synced:['Synced','ok'],error:['Cloud error','bad'],unavailable:['Offline',''],waiting:['Not sent yet','warn']};
+  const map={off:['Cloud',''],connecting:['Syncing…','warn'],synced:['Synced','ok'],error:['Cloud error','bad'],unavailable:['Offline',''],waiting:['Not sent yet','warn'],full:['Cloud full','bad']};
   const shown=cloudStatus==='connecting'&&navigator.onLine===false?'unavailable':cloudStatus;
   const [label,cls]=map[shown]||map.off;
   b.className='btn ghost cloud-'+(cls||'');
@@ -1880,8 +1916,23 @@ function updateCloudUI(){
       synced:'✓ The roster is saved to '+who+' and kept in step on every device signed in with it.',
       error:'The cloud refused the roster. Check the internet connection, and that the rules in firestore.rules are published in the Firebase console (SECURITY.md).',
       waiting:'No connection: your changes are kept on this device and are sent as soon as the connection is back.',
+      full:'The roster is too large for the cloud. Changes are kept on this device only — export a backup.',
       unavailable:'Offline: the app is working from this device only. Changes are saved here and sent to your account when the page is next opened with a connection.'};
     msg.textContent=m[shown]||m.off;
+  }
+  const box=document.getElementById('cloudSize');
+  if(box){
+    const on=!!cloudUid&&cloudBytes>0&&cloudStatus!=='unavailable';box.hidden=!on;
+    if(on){
+      const pct=Math.min(100,Math.round(cloudBytes/DOC_LIMIT*100)),lvl=cloudBytes>=DOC_LIMIT*DOC_BAD?'bad':cloudBytes>=DOC_LIMIT*DOC_WARN?'warn':'';
+      box.className='csize'+(lvl?' '+lvl:'');
+      document.getElementById('cloudSizeFill').style.width=Math.max(1,pct)+'%';
+      const top=cloudBytesTop.filter(t=>t[1]>=1024).map(([k,b])=>`${SIZE_PARTS[k]||k} ${sizeText(b)}`).join(', ');
+      document.getElementById('cloudSizeMsg').textContent=`Cloud roster: ${sizeText(cloudBytes)} of 1 MB (${pct}%)`+
+        (lvl==='bad'?'. Nearly full — saves will stop when it is. Export a backup and ask for old fortnights to be archived.':
+         lvl==='warn'?'. Getting large: plenty of room for now, but plan to archive old fortnights.':'.')+
+        (top?` Largest: ${top}.`:'');
+    }
   }
   const sec=document.getElementById('cloudSecureMsg');
   if(sec){

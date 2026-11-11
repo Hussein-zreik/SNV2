@@ -79,6 +79,9 @@ Be aware of the limits:
   settings are all kept. If both changed the *same* cell before either had synced,
   the one saved last stays, and both devices show a notice naming the cell and the
   two values; the device whose change was replaced can bring it back with Undo.
+- **Size.** The whole roster is one cloud record, which can hold about 1 MB: roughly
+  seven years of locked fortnights. **Cloud** shows how full it is and warns well before
+  the limit; a save that would not fit is kept on the device and never half-sent.
 - **One account.** Colleagues with their own accounts, or view-only access, are not
   built yet.
 

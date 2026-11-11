@@ -1110,6 +1110,36 @@ check('a button wired to a missing function is reported, not silently ignored', 
 check('dragging a row still highlights the row under the pointer', btn.drag === true);
 check('inline code injected into the page cannot run, and the attempt is blocked by the policy', btn.inlineBlocked === true && cspBlocked.some(v => /script-src-attr/.test(v)));
 
+/* ---------------- 4k. cloud roster size meter (H2) ---------------- */
+const size = await page.evaluate(() => {
+  const out = {}, keep = { cloudUid, cloudStatus, cloudBytes, cloudBytesTop, cloudSizeWarned };
+  const box = document.getElementById('cloudSize'), msg = () => document.getElementById('cloudSizeMsg').textContent;
+  out.bytes = docBytes({ a: 'é' }) === 10;                      // UTF-8 bytes, not characters
+  const doc = n => ({ state: { lockedCycles: { k: 'x'.repeat(n) }, notes: { k: 'y'.repeat(20000) } }, rev: 1 });
+  cloudUid = 'audit'; cloudStatus = 'synced'; cloudSizeWarned = 0;
+  noteDocSize(doc(300000)); updateCloudUI();
+  out.low = !box.hidden && box.className === 'csize' && /Cloud roster: 3\d\d KB of 1 MB \(3\d%\)\./.test(msg()) && /Largest: locked fortnights/.test(msg()) && problems.length === 0;
+  out.lowText = msg();
+  noteDocSize(doc(780000)); updateCloudUI();
+  out.warn = box.className === 'csize warn' && /Getting large/.test(msg()) && problems.length === 0;
+  noteDocSize(doc(960000)); updateCloudUI();
+  out.bad = box.className === 'csize bad' && /Nearly full/.test(msg()) && problems.filter(p => /of the 1 MB Firestore allows/.test(p)).length === 1;
+  noteDocSize(doc(970000));
+  out.once = problems.filter(p => /of the 1 MB Firestore allows/.test(p)).length === 1;
+  cloudStatus = 'unavailable'; updateCloudUI();
+  out.hiddenOffline = box.hidden;
+  dismissProblems();
+  cloudUid = keep.cloudUid; cloudStatus = keep.cloudStatus; cloudBytes = keep.cloudBytes; cloudBytesTop = keep.cloudBytesTop; cloudSizeWarned = keep.cloudSizeWarned;
+  updateCloudUI();
+  return out;
+});
+console.log('\n--- cloud roster size ---');
+check('size is counted in bytes as stored, not characters', size.bytes === true);
+check('a normal roster shows its size and what takes the most room, with no warning', size.low === true, size.lowText);
+check('at 70% the meter turns amber and says to plan ahead, still no alarm', size.warn === true);
+check('at 90% it turns red and the problem banner says so, once', size.bad === true && size.once === true);
+check('the meter is hidden when there is no connection', size.hiddenOffline === true);
+
 /* ---------------- 5. no runtime errors ---------------- */
 console.log('\n--- runtime ---');
 const provokedAll = cspBlocked.filter(v => /evil\.example|eval|script-src-attr/.test(v)).length;   // the deliberate attempts in 4g and 4j
