@@ -760,10 +760,19 @@ check('undo restores every field', reg2.undoReverted === true);
 /* ---------------- 4c. staff requests window (the cloud side is test/cloud.mjs) ---------------- */
 const sreq = await page.evaluate(() => {
   const out = {};
-  // this audit runs offline, so Firebase never loads: the window must say so, not break
+  // Firebase may or may not have loaded (CI has a network, a sandbox may not), so both
+  // states are forced here instead of assumed
+  const shown = id => !document.getElementById(id).hidden;
+  const realDb = cloudDb, realFb = window.firebase;
+  cloudDb = null;                                   // no connection: the window must say so, not break
   openStaffReq();
-  out.offlineMsg = !document.getElementById('sreqOff').hidden && document.getElementById('sreqSignin').hidden &&
-    document.getElementById('sreqMain').hidden && document.getElementById('sreqBadge').hidden;
+  out.offlineMsg = shown('sreqOff') && !shown('sreqSignin') && !shown('sreqMain') && !shown('sreqBadge');
+  cloudDb = realDb || {};                           // connected, nobody signed in as manager
+  if (!realFb) window.firebase = { auth: () => ({}) };
+  renderStaffReq();
+  out.signinMsg = mgrUser === null && !shown('sreqOff') && shown('sreqSignin') && !shown('sreqMain') &&
+    !shown('sreqSignoutBtn') && !shown('sreqBadge');
+  cloudDb = realDb; if (!realFb) delete window.firebase;
   closeStaffReq();
   // what arrives from the link is untrusted: sreqClean keeps only the expected shape
   const stamp = { toMillis: () => 1794398400000 };
@@ -785,6 +794,7 @@ const sreq = await page.evaluate(() => {
 });
 console.log('\n--- staff requests window ---');
 check('without a connection the window explains itself', sreq.offlineMsg === true);
+check('connected but not signed in, it asks for the manager sign-in and shows nothing', sreq.signinMsg === true);
 check('a received request is reduced to its expected shape', sreq.clean === true);
 check('consecutive days are labelled as a range', sreq.label === 'Tue 01 Dec – Thu 03 Dec, Sat 05 Dec 2026', sreq.label);
 check('malformed requests are dropped', sreq.rejects === true);

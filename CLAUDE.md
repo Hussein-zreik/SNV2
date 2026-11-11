@@ -15,7 +15,7 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 npm install            # devDependencies only; the app itself has no dependencies
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
 npm run test:unit      # 53 engine unit tests in plain Node, ~0.5s
-npm test               # 118 checks driving the app in headless Chromium, ~40s
+npm test               # 119 checks driving the app in headless Chromium, ~40s
 npm run test:cloud     # 110 checks of firestore.rules + the staff request link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
