@@ -2,14 +2,19 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
+<!-- What this page may run and talk to. No inline handlers here, so the one inline
+     script is allowed by its checksum (test/vendor.test.mjs checks it and
+     `node test/vendor.test.mjs --write` updates it after an edit) and nothing else
+     inline can run. It may talk only to Google's API servers (the Firestore database). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-Woq5UV8BoX3BsRN66J2rNj7pWUfIKkTM404EFmxZ0Us='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://www.google.com; connect-src https://*.googleapis.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex,nofollow">
 <title>Request a day off</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" defer></script>
+<script src="vendor/firebase-app-compat.js" defer></script>
+<script src="vendor/firebase-firestore-compat.js" defer></script>
 <!--
   Staff request page — the link a nurse manager sends to staff (request.html?f=<form id>).
   A staff member picks their name, the day(s) they want off and a reason, and sends it.

@@ -2,17 +2,25 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- What this page may load and talk to (audit H5). Every script is served from this
+     site: the libraries are in vendor/, not fetched from a CDN. The page may talk only
+     to Google's API servers (Firebase sign-in and the roster), so a script that got
+     onto the page could not send the roster anywhere else. 'unsafe-inline' has to stay
+     while the buttons use inline onclick handlers; apis.google.com and the
+     firebaseapp.com frame are what Firebase sign-in loads on phones. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RN Rotating Schedule</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" defer></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js" defer></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" defer></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" defer></script>
+<!-- exact copies of the published npm files; versions and checksums in vendor/manifest.json -->
+<script src="vendor/exceljs.min.js" defer></script>
+<script src="vendor/jspdf.umd.min.js" defer></script>
+<script src="vendor/jspdf.plugin.autotable.min.js" defer></script>
+<script src="vendor/firebase-app-compat.js" defer></script>
+<script src="vendor/firebase-auth-compat.js" defer></script>
+<script src="vendor/firebase-firestore-compat.js" defer></script>
 <style>
 :root{
   /* type */
@@ -155,7 +163,7 @@ input[type=date]:focus{border-color:var(--border-3)}
 .gp-shift{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-sm);cursor:pointer}
 .gp-shift .gp-sub{color:var(--muted-2);font-size:var(--fs-xs)}
 .banner[hidden]{display:none}
-#syncNote ul{margin:4px 0 4px 18px;padding:0;font-family:var(--font-mono);font-size:var(--fs-xs)}
+#syncNote ul,#errNote ul{margin:4px 0 4px 18px;padding:0;font-family:var(--font-mono);font-size:var(--fs-xs)}
 #syncNote .bhint{font-size:var(--fs-xs)}
 .banner.bad{background:var(--hol-bg);border-color:var(--hol-bd);color:var(--hol-fg)}
 /* "whose turn this cycle" info panel */
@@ -667,6 +675,7 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
 <div class="summary-row" id="sumBar"></div>
 
 <div class="banner bad" id="saveWarn" role="alert" hidden><span class="bic">⚠</span><div><b>Changes are not being saved on this device.</b> The browser's storage is full or blocked. Your work is still on screen: open <b>Settings → Roster &amp; data → Export backup</b> now, before closing or reloading this page.</div></div>
+<div class="banner bad" id="errNote" role="alert" hidden><span class="bic">⚠</span><div id="errNoteBody" style="flex:1"></div><button class="btn sm" onclick="dismissProblems()">Dismiss</button></div>
 <div class="banner warn" id="syncNote" role="status" hidden><span class="bic">⇄</span><div id="syncNoteBody" style="flex:1"></div><button class="btn sm" onclick="dismissSyncNote()">Dismiss</button></div>
 <div class="banner ok" id="banner"></div>
 
@@ -1009,6 +1018,45 @@ tbody tr.grp-row td.grp-lbl{position:sticky;left:0;background:var(--panel-2);bor
      getMonday, isoKey, ...) exist when the inline script runs at parse time. -->
 <script src="engine.js"></script>
 <script>
+/* ---------- nothing fails silently (audit M3) ---------- */
+// An error nobody sees is worse than the error. Anything unexpected — an exception, a
+// promise nobody handled, something the page's security policy blocked, saved data that
+// cannot be read — is written to the console AND shown in a red banner that stays until
+// dismissed, with the detail to quote when asking for help. Expected, handled outcomes
+// (no connection, storage unavailable in a private window) keep their own messages.
+const problems=[];
+function noteProblem(text,detail){
+  const line=String(text||'Unexpected error').slice(0,240)+(detail?' — '+String(detail).slice(0,200):'');
+  if(problems.includes(line))return;
+  problems.push(line);if(problems.length>5)problems.shift();
+  console.error('[problem]',line);
+  const box=document.getElementById('errNote'),body=document.getElementById('errNoteBody');
+  if(!box||!body)return;                          // page not built yet: the list is shown by showProblems()
+  showProblems();
+}
+function showProblems(){
+  const box=document.getElementById('errNote'),body=document.getElementById('errNoteBody');
+  if(!box||!body||!problems.length)return;
+  body.textContent='';
+  const b=document.createElement('b');b.textContent='Something went wrong.';
+  const t=document.createElement('span');
+  t.textContent=' Your roster is still saved on this device. If the app looks wrong, reload the page; if it keeps happening, send this message to whoever maintains the app:';
+  const ul=document.createElement('ul');
+  for(const p of problems){const li=document.createElement('li');li.textContent=p;ul.appendChild(li);}
+  body.appendChild(b);body.appendChild(t);body.appendChild(ul);
+  box.hidden=false;
+}
+function dismissProblems(){problems.length=0;const box=document.getElementById('errNote');if(box){box.hidden=true;document.getElementById('errNoteBody').textContent='';}}
+window.addEventListener('error',e=>{
+  if(!e||!e.message||/ResizeObserver loop/.test(e.message))return;     // layout chatter, not a fault
+  noteProblem(e.message,(e.filename||'').split('/').pop()+(e.lineno?':'+e.lineno:''));
+});
+window.addEventListener('unhandledrejection',e=>{
+  const r=e&&e.reason;noteProblem('A background task failed',r&&(r.code||r.message)||String(r));
+});
+document.addEventListener('securitypolicyviolation',e=>{
+  noteProblem('The page was stopped from loading or contacting something',`${e.blockedURI||'inline'} (${e.violatedDirective})`);
+});
 const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 // the five core day shifts — the pool the auto-generator fills from (never custom),
 // the columns of the staffing-minimums grid, and the base of every derived table
@@ -1396,7 +1444,7 @@ function saveState(){
     }
     // keep the History window honest: what is listed is what a reload will still have
     if(ok&&hist.length<history.length)history.splice(0,history.length-hist.length);
-  }catch(e){ok=false;}
+  }catch(e){ok=false;console.error('save failed',e);}
   setSaveFailed(!ok);
   if(typeof cloudSave==='function')cloudSave(); // mirror to the cloud when connected
   if(typeof sreqQueuePublish==='function')sreqQueuePublish(); // keep the staff link's name list current
@@ -1465,7 +1513,15 @@ function loadState(){
     if(typeof s.trackerOpen==='boolean')trackerOpen=s.trackerOpen;
     if(typeof s.cycInfoOpen==='boolean')cycInfoOpen=s.cycInfoOpen;
     if(typeof s.manualMode==='boolean')manualMode=s.manualMode;   // per-device
-  }catch(e){/* ignore corrupt state */}
+  }catch(e){
+    // The roster saved on this device could not be read. Never carry on as if there
+    // had been none: the next save would write a blank roster over it. Set the
+    // unreadable copy aside, put the half-loaded state back into shape, and say so.
+    try{const raw=localStorage.getItem(STORE_KEY);if(raw)localStorage.setItem(STORE_KEY+'_unreadable',raw);}
+    catch(e2){/* no room for a second copy */}
+    try{sanitizeState();}catch(e2){/* nothing more to tidy */}
+    noteProblem('The roster saved on this device could not be read. A copy was set aside; sign in to load the roster from your account, or import a backup',e&&e.message);
+  }
 }
 
 /* ---------- cloud sync (Firebase Firestore, one roster per manager account) ---------- */
@@ -1746,12 +1802,14 @@ function pushCloud(){
       retryTimer=setTimeout(()=>{if(uid===cloudUid&&localAhead())pushCloud();},offline?8000:1500);
   });
 }
-window.addEventListener('online',()=>{if(cloudUid&&rosterReady&&localAhead())pushCloud();});
+window.addEventListener('online',()=>{updateCloudUI();if(cloudUid&&rosterReady&&localAhead())pushCloud();});
+window.addEventListener('offline',()=>updateCloudUI());
 function updateCloudUI(){
   const b=document.getElementById('cloudBtn'); if(!b)return;
   const cloud='<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.5A4.5 4.5 0 0 1 18 18z"/></svg>';
   const map={off:['Cloud',''],connecting:['Syncing…','warn'],synced:['Synced','ok'],error:['Cloud error','bad'],unavailable:['Offline',''],waiting:['Not sent yet','warn']};
-  const [label,cls]=map[cloudStatus]||map.off;
+  const shown=cloudStatus==='connecting'&&navigator.onLine===false?'unavailable':cloudStatus;
+  const [label,cls]=map[shown]||map.off;
   b.className='btn ghost cloud-'+(cls||'');
   b.innerHTML=cloud+'<span class="btxt">'+label+'</span>';
   const msg=document.getElementById('cloudStatusMsg');
@@ -1762,7 +1820,7 @@ function updateCloudUI(){
       error:'The cloud refused the roster. Check the internet connection, and that the rules in firestore.rules are published in the Firebase console (SECURITY.md).',
       waiting:'No connection: your changes are kept on this device and are sent as soon as the connection is back.',
       unavailable:'Offline: the app is working from this device only. Changes are saved here and sent to your account when the page is next opened with a connection.'};
-    msg.textContent=m[cloudStatus]||m.off;
+    msg.textContent=m[shown]||m.off;
   }
   const sec=document.getElementById('cloudSecureMsg');
   if(sec){
@@ -2064,7 +2122,7 @@ function markSigned(on){
   try{
     if(on){sessionStorage.setItem(SIGNED_KEY,'1');if(keepHere())localStorage.setItem(SIGNED_KEY,'1');else localStorage.removeItem(SIGNED_KEY);}
     else{sessionStorage.removeItem(SIGNED_KEY);localStorage.removeItem(SIGNED_KEY);}
-  }catch(e){}
+  }catch(e){/* storage unavailable (private window): the app then asks to sign in each visit */}
 }
 function lockSay(text){lockEl('lockErr').textContent=text||'';}
 function lockOpen(){            // a manager session exists
@@ -3022,7 +3080,7 @@ function pruneOld(){
 function resetAll(){
   if(!confirm('This erases the ENTIRE schedule, roster, requests and settings on this device and (if connected) the shared cloud copy. Export a backup first. Continue?'))return;
   if(!confirm('Are you absolutely sure? This cannot be undone.'))return;
-  try{localStorage.removeItem(STORE_KEY);}catch(e){}
+  try{localStorage.removeItem(STORE_KEY);}catch(e){/* storage unavailable: nothing was stored to remove */}
   overrides={};frozen={};committedCycles={};cycleSeeds={};history=[];staffShifts={};
   names=Array.from({length:19},(_,i)=>`RN ${i+1}`);groups=Array.from({length:19},(_,i)=>i<10?'A':'B');
   holBal=Array(19).fill(defHol);vacBal=Array(19).fill(defVac);order=Array.from({length:19},(_,i)=>i);

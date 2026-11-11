@@ -92,6 +92,23 @@ rules check, on the real project, proves they were published.
 
 ---
 
+## What the pages are allowed to load and contact
+
+- **No code comes from another website.** The Excel, PDF and Firebase libraries are
+  stored with the app (`vendor/`) as exact, checksummed copies of the published files,
+  so a compromised CDN cannot change what runs.
+- **The pages can talk only to Google's servers** (Firebase sign-in and the database).
+  A built-in policy refuses everything else, so even a script that got onto the page
+  could not send the roster to another site.
+- **If the policy ever blocks something, you see it**: a red banner at the top names
+  what was stopped. Send that text to whoever maintains the app.
+
+What this does not do: the app's own buttons still use inline scripts, so the policy
+limits where data can go, not every script that could run. Fonts still come from Google
+Fonts.
+
+---
+
 ## Staff request link
 
 Staff open a link (`request.html?f=…`), pick their name and the day(s) they want

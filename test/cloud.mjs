@@ -12,9 +12,12 @@
  * staff link, a member of staff sends a request from request.html on a phone-sized
  * screen, and it appears in the manager's Staff requests window.
  *
- * Nothing here touches the real Firebase project: the pages load the same compat
- * SDK version from node_modules (instead of the CDN) with a small patch that points
- * it at the emulators and at the throwaway project id "demo-snv2".
+ * Nothing here touches the real Firebase project. The pages are served exactly as
+ * they are, with two test-only changes made by the little server below: a patch
+ * appended to vendor/firebase-firestore-compat.js points the SDK at the emulators and
+ * at the throwaway project id "demo-snv2", and the pages' security policy gets one
+ * extra allowed address (the emulators on 127.0.0.1). Every other request is refused,
+ * and any violation of the policy fails the run.
  */
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'url';
@@ -31,7 +34,6 @@ if (!FS_HOST || !AUTH_HOST) {
   process.exit(2);
 }
 const [FS_ADDR, FS_PORT] = FS_HOST.split(':');
-const SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
 const PATCH = `
 ;(function(){var init=firebase.initializeApp;
 firebase.initializeApp=function(cfg,name){
@@ -52,16 +54,23 @@ const server = http.createServer((req, res) => {
   const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (p === '/__sdk.html') {
     res.writeHead(200, { 'content-type': 'text/html' });
-    res.end(`<!doctype html><meta charset="utf-8"><script src="${SDK}firebase-app-compat.js"></script>` +
-      `<script src="${SDK}firebase-auth-compat.js"></script><script src="${SDK}firebase-firestore-compat.js"></script>`);
+    res.end('<!doctype html><meta charset="utf-8"><script src="/vendor/firebase-app-compat.js"></script>' +
+      '<script src="/vendor/firebase-auth-compat.js"></script><script src="/vendor/firebase-firestore-compat.js"></script>');
     return;
   }
   const file = path.join(ROOT, p);
-  if (!file.startsWith(ROOT) || !/^\/(index\.html|request\.html|engine\.js)$/.test(p) || !fs.existsSync(file)) {
+  if (!file.startsWith(ROOT) || !/^\/(index\.html|request\.html|engine\.js|vendor\/[a-z.-]+\.js)$/.test(p) || !fs.existsSync(file)) {
     res.writeHead(404); res.end('not found'); return;
   }
+  let body = fs.readFileSync(file);
+  if (p === '/vendor/firebase-firestore-compat.js') body = body + PATCH;      // the last SDK file every page loads
+  if (p.endsWith('.html')) {                                                  // let the page reach the emulators, nothing else
+    const html = body.toString('utf8'), want = 'connect-src https://*.googleapis.com';
+    if (!html.includes(want)) throw new Error(p + ': security policy not found');
+    body = html.replace(want, want + ' http://127.0.0.1:*');
+  }
   res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
-  res.end(fs.readFileSync(file));
+  res.end(body);
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const BASE = `http://127.0.0.1:${server.address().port}`;
@@ -71,21 +80,18 @@ async function launch() {
   catch { return await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' }); }
 }
 const browser = await launch();
-const pageErrors = [];
+const pageErrors = [], cspBlocked = [], outside = new Set();
 async function newContext(opts = {}) {
   const ctx = await browser.newContext(opts);
-  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, route => {
-    const url = route.request().url();
-    if (url.startsWith(SDK)) {
-      const name = url.slice(SDK.length);
-      let body = fs.readFileSync(path.join(ROOT, 'node_modules', 'firebase', name), 'utf8');
-      if (name === 'firebase-firestore-compat.js') body += PATCH;   // the last SDK file every page loads
-      return route.fulfill({ contentType: 'text/javascript', body });
-    }
-    return route.abort();                    // fonts, ExcelJS, jsPDF: not needed here
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, route => {              // nothing leaves this machine
+    outside.add(new URL(route.request().url()).host);
+    return route.abort();
   });
+  await ctx.exposeBinding('__cspBlocked', (src, v) => { cspBlocked.push(v); });
+  await ctx.addInitScript(() => document.addEventListener('securitypolicyviolation', e => window.__cspBlocked(`${e.blockedURI} (${e.violatedDirective})`)));
   return ctx;
 }
+const noFirebase = page => page.route(u => u.pathname.startsWith('/vendor/firebase-'), r => r.abort());
 const watch = (page, label) => page.on('pageerror', e => pageErrors.push(`${label}: ${e}`));
 const until = (page, fn, arg, timeout = 15000) => page.waitForFunction(fn, arg, { timeout }).then(() => true, () => false);
 
@@ -361,7 +367,7 @@ await dev2.close();
 // the same device with no internet: Firebase cannot load at all
 const off = await dctx.newPage();
 watch(off, 'second device, offline');
-await off.route(u => u.href.startsWith(SDK), r => r.abort());
+await noFirebase(off);
 await off.goto(BASE + '/index.html');
 check('a device that stays signed in opens with no internet', !(await locked(off)) && await until(off, () => cloudStatus === 'unavailable') && !(await locked(off)));
 check('offline, it shows the roster it last synced', await off.evaluate(() => names[0] === 'Legacy Nurse' && names[1] === 'Edited On One'));
@@ -394,11 +400,29 @@ await fctx.close();
 const nctx = await newContext();
 const cold = await nctx.newPage();
 watch(cold, 'new device, offline');
-await cold.route(u => u.href.startsWith(SDK), r => r.abort());
+await noFirebase(cold);
 await cold.goto(BASE + '/index.html');
 check('a device that never signed in stays locked without internet, and says why',
   await until(cold, () => /No internet connection/.test(document.getElementById('lockErr').textContent)) && await locked(cold));
 await nctx.close();
+
+// On phones Firebase prepares its sign-in helper early (a script from apis.google.com
+// and a frame). Here that script cannot load at all — the worst case — and signing in
+// must still work.
+const pctx = await newContext({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+  viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+const phone = await pctx.newPage();
+watch(phone, 'manager on a phone');
+await phone.goto(BASE + '/index.html');
+await until(phone, () => cloudAuth === 'off');
+await phone.fill('#lockEmail', 'ward@example.test');
+await phone.fill('#pw1', 'ward-pass-1');
+await phone.tap('#lockGo');
+check('the manager can sign in on a phone and gets the roster',
+  await until(phone, () => !!mgrUser && cloudStatus === 'synced' && document.getElementById('lockScreen').classList.contains('unlocked')) &&
+  await phone.evaluate(() => document.getElementById('errNote').hidden));
+check('on the phone, Firebase asked for its sign-in helper and coped without it', outside.has('apis.google.com'), [...outside].join(', '));
+await pctx.close();
 
 console.log('--- manager creates the staff link ---');
 const before = await mgr.evaluate(() => ({ state: JSON.stringify(cloudStateObj()), hist: history.length, people: sreqPeople().length, rn0: names[order[0]] }));
@@ -539,6 +563,10 @@ const shut = await mgr.evaluate(async ({ id, uid }) => {
 }, { id: link2.split('f=')[1], uid: moved.uid });
 check('a signed-out device can read neither the requests nor the roster', shut.every(r => r === 'permission-denied'), shut.join());
 
+check('the security policy was never tripped, on either page', cspBlocked.length === 0, cspBlocked.join(' | '));
+// www.google.com is Firestore's own connectivity probe (a 1-pixel image) when a request fails
+check('the only outside addresses the pages asked for: fonts, Firebase\'s phone sign-in helper and its connectivity probe',
+  [...outside].every(h => ['fonts.googleapis.com', 'fonts.gstatic.com', 'apis.google.com', 'www.google.com'].includes(h)), [...outside].join(', '));
 check('no page errors', pageErrors.length === 0, pageErrors.join(' | '));
 await browser.close();
 server.close();

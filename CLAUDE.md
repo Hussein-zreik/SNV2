@@ -12,11 +12,11 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 ## Commands
 
 ```bash
-npm install            # devDependencies only; the app itself has no dependencies
+npm install            # devDependencies only; the app's own libraries are checked in under vendor/
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
-npm run test:unit      # 53 engine unit tests in plain Node, ~0.5s
-npm test               # 144 checks driving the app in headless Chromium, ~50s
-npm run test:cloud     # 166 checks of firestore.rules, sign-in, roster sync + the staff link, in the
+npm run test:unit      # 53 engine unit tests + 27 vendor/security-policy checks, plain Node, ~1s
+npm test               # 162 checks driving the app in headless Chromium, ~60s
+npm run test:cloud     # 170 checks of firestore.rules, sign-in, roster sync + the staff link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
 
@@ -39,10 +39,23 @@ the repo root, and delete them when done.
 `{ executablePath: '/opt/pw-browsers/chromium' }` — this is what `launch()` in
 `test/audit.mjs` already does. Never run `playwright install` here.
 
-**CDN libraries (ExcelJS, jsPDF, Firebase) will not load offline.** `exportExcel()`
-silently falls back to CSV when `window.ExcelJS` is missing, so an offline test of the
-Excel path is really testing CSV. To exercise the real `.xlsx` writer, install `exceljs`
-somewhere outside the repo and inject it with `page.addScriptTag({ path: ... })`.
+**Libraries are served from `vendor/`, not a CDN** (audit H5). ExcelJS, jsPDF,
+jspdf-autotable and the Firebase compat SDK are exact copies of the published npm files;
+`vendor/manifest.json` records package, version and checksum, and `test/vendor.test.mjs`
+fails if a file changes or a page loads a script from another site. To update one: copy the
+new file from the npm package, set its version in the manifest, run
+`node test/vendor.test.mjs --write`, and keep the `firebase` devDependency on the same
+version (the cloud tests run those very files). So in the audit the real Excel and PDF
+writers run; only the Firebase files are withheld there (`/vendor/firebase-` is aborted).
+
+**Both pages carry a Content-Security-Policy `<meta>`.** Nothing loads or connects unless
+it is listed: scripts from this site only, connections to `*.googleapis.com` only. If you
+add a resource from somewhere new it will be blocked — and shown in the red problem
+banner — until the policy lists it. `index.html` needs `'unsafe-inline'` for its inline
+`onclick` handlers, so there the policy limits where data can go rather than what can run.
+`request.html` has no inline handlers: its single inline `<script>` is allowed by checksum,
+so **after any edit to that script run `node test/vendor.test.mjs --write`** or the page
+stops working (the test catches it). Do not use `eval`/`new Function` anywhere.
 
 ## Architecture
 
@@ -247,6 +260,17 @@ sweep, `git stash pop`. Count the three things that matter: nurses off the 4/3 o
 nurses working 4+ days in a row, and nights staffed below the minimum. A change that fixes
 one rule by quietly loosening another will otherwise look like a success.
 
+## Nothing fails silently
+
+`noteProblem(text, detail)` (top of the inline script) writes to the console **and** shows
+the red `#errNote` banner, which stays until dismissed. It is fed by uncaught errors,
+unhandled promise rejections and security-policy violations, and by `loadState()` when the
+saved roster cannot be read (the unreadable copy is kept under `STORE_KEY+'_unreadable'`
+rather than overwritten by a blank roster). When you add a `catch`, either handle the
+failure in a way the user can see, call `noteProblem`, or leave a comment saying why it is
+safe to ignore (e.g. storage unavailable in a private window). The audit asserts the
+banner stayed empty for the whole run.
+
 ## Sign-in, the lock screen and the cloud roster
 
 One **manager account** (Firebase email + password, created by hand in the console)
@@ -321,9 +345,9 @@ manager reads the result in **Staff requests** (`openStaffReq()`), a reference l
   `textContent` only.
 - **Dates are local calendar days on both pages** (`fromIso`, `new Date(k+'T00:00:00')`),
   never `new Date('YYYY-MM-DD')`, which is UTC and lands a day early west of Greenwich.
-- `test/cloud.mjs` serves the same SDK version from `node_modules/firebase` in place of
-  the CDN, patched to point at the emulators — keep the `firebase` devDependency on the
-  exact version in the `<script>` tags.
+- `test/cloud.mjs` serves the pages as they are, appending a patch to
+  `vendor/firebase-firestore-compat.js` that points the SDK at the emulators, and adding
+  `http://127.0.0.1:*` to the policy's `connect-src`. Any policy violation fails the run.
 
 ## Stale documentation
 

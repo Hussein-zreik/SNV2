@@ -42,6 +42,8 @@ const bugRules = {
 };
 
 export default [
+  // exact copies of published libraries (see vendor/manifest.json): not ours to lint
+  { ignores: ['vendor/**'] },
   {
     files: ['**/*.html'],
     plugins: { html },

