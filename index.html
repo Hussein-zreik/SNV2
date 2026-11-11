@@ -2315,7 +2315,7 @@ function schedCtx(){
   const locked={};for(const gk in lockedCycles){const o={};for(const r of lockedCycles[gk].rns||[])o[r.id]=r.row;locked[gk]=o;}
   return {N,groups,order,ids,overrides,frozen,committedCycles,cycleSeeds,manualMode,seed,nightList,locked,
     dailyMin:DAILY_MIN,coreDay:CORE_DAY,work:WORK_TYPES,nightMin:nightMinOf(),
-    anchorMonday:getMonday(si?new Date(si):new Date())};
+    anchorMonday:getMonday(parseLocal(si))};
 }
 function computeSchedule(off,applyBoundary=true,forceFill=false){return Engine.computeSchedule(schedCtx(),off,applyBoundary,forceFill);}
 function turnFor(off){return Engine.turnFor(schedCtx(),off);}
@@ -3069,7 +3069,7 @@ function setAllBal(){
 }
 function pruneOld(){
   const cur=autoOffset(document.getElementById('startDate').value);const keepFrom=cur-6; // keep ~3 months back
-  const si=document.getElementById('startDate').value;const anchor=getMonday(si?new Date(si):new Date());
+  const si=document.getElementById('startDate').value;const anchor=getMonday(parseLocal(si));
   let n=0;
   for(const map of [committedCycles,cycleSeeds,frozen]){for(const k in map){
     const off=Math.round((new Date(k+'T00:00:00')-anchor)/(86400000*14));
@@ -3245,7 +3245,7 @@ function toast(msg){
 /* ---------- navigation ---------- */
 // how many whole 2-week cycles have elapsed between the anchor Monday and today
 function autoOffset(anchorISO,today){
-  const a=getMonday(anchorISO?new Date(anchorISO):new Date());
+  const a=getMonday(parseLocal(anchorISO));
   const t=getMonday(today||new Date());
   return Math.floor(Math.round((t-a)/86400000)/14);
 }
@@ -3255,7 +3255,7 @@ let reqSelDays=new Set();        // day-indexes (0-13) selected for the new requ
 // REQ_TYPES is derived by rebuildShifts() (core + custom shifts)
 function reqDates(){
   const si=document.getElementById('startDate').value;
-  const base=addDays(getMonday(si?new Date(si):new Date()),reqOffset*14);
+  const base=addDays(getMonday(parseLocal(si)),reqOffset*14);
   return Array.from({length:14},(_,i)=>addDays(base,i));
 }
 function openRequests(){reqOffset=cycleOffset;reqSelDays=new Set();renderRequests();document.getElementById('reqModal').classList.add('open');}
@@ -3445,7 +3445,7 @@ function importBackup(input){
 // the 14 ISO day keys of a cycle, in order — every per-day store is keyed by these
 function cycleDayKeys(off){
   const si=document.getElementById('startDate').value;
-  const base=addDays(getMonday(si?new Date(si):new Date()),off*14);
+  const base=addDays(getMonday(parseLocal(si)),off*14);
   return Array.from({length:14},(_,d)=>isoKey(addDays(base,d)));
 }
 // ISO date of a cycle's start Monday — the key for committed fortnights / seeds
@@ -4236,7 +4236,7 @@ let reportY=null,reportM=null; // year, month index (0-11)
 // tally each RN's duties across a full calendar month (spans multiple cycles)
 function monthlyReport(year,month){
   const first=new Date(year,month,1),last=new Date(year,month+1,0);
-  const anchor=getMonday(startDateStr?new Date(startDateStr):new Date());
+  const anchor=getMonday(parseLocal(startDateStr));
   const cache={};
   const cyc=o=>(cache[o]||(cache[o]=computeSchedule(o)));
   const rows=names.map(()=>({total:0,D6:0,D7:0,S8:0,S9:0,S10:0,N7:0,HOL:0,VAC:0,SL:0,REQ:0}));
@@ -4313,7 +4313,7 @@ const fairParse=s=>{const p=String(s).split('-');return new Date(+p[0],(+p[1]||1
 // Tally nights / weekend days / holidays / vacations per RN across any date range.
 // Uses the pure scheduler across every cycle the range touches (same approach as the report).
 function fairnessData(first,last){
-  const anchor=getMonday(startDateStr?new Date(startDateStr):new Date());
+  const anchor=getMonday(parseLocal(startDateStr));
   const cache={};
   const cyc=o=>(cache[o]||(cache[o]=computeSchedule(o)));
   const rows=names.map(()=>({nights:0,wknd:0,hol:0,vac:0,total:0}));

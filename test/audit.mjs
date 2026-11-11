@@ -1005,6 +1005,39 @@ for (const f of files) {
 }
 check('exporting raised no problem banner', await page.evaluate(() => document.getElementById('errNote').hidden && problems.length === 0));
 
+/* ---------------- 4i. the start date means the same day in every timezone (H1) ---------------- */
+async function datesIn(timezoneId) {
+  const c = await browser.newContext({ timezoneId });
+  await c.route(/^https?:\/\//, r => r.abort());
+  await c.route(/\/vendor\/firebase-/, r => r.abort());
+  await c.addInitScript(() => sessionStorage.setItem('rn_signed', '1'));
+  const pg = await c.newPage();
+  pg.on('pageerror', e => pageErrors.push(`${timezoneId}: ${e}`));
+  await pg.goto(APP);
+  await pg.waitForTimeout(400);
+  const r = await pg.evaluate(() => {
+    const si = document.getElementById('startDate');
+    si.value = '2026-11-09'; si.dispatchEvent(new Event('change', { bubbles: true })); si.dispatchEvent(new Event('input', { bubbles: true }));
+    startDateStr = '2026-11-09';
+    reqOffset = 0;
+    const off = autoOffset('2026-11-09', new Date(2026, 10, 18));         // Wed 18 Nov: still the first fortnight
+    cycleOffset = 0; render();
+    const head = [...document.querySelectorAll('#tbl thead th')].map(t => t.textContent).join(' ');
+    return { cycle: cycleDayKeys(0)[0], next: cycleDayKeys(1)[0], req: isoKey(reqDates()[0]), off, sunday: isoKey(getMonday(parseLocal('2026-11-15'))),
+      headFirst: /09\s*Nov/.test(head), period: typeof periodLabel === 'function' ? periodLabel() : '' };
+  });
+  await c.close();
+  return r;
+}
+const zones = {};
+for (const tz of ['America/Los_Angeles', 'America/New_York', 'UTC', 'Asia/Beirut', 'Pacific/Auckland']) zones[tz] = await datesIn(tz);
+console.log('\n--- start date across timezones ---');
+for (const [tz, r] of Object.entries(zones))
+  check(`${tz}: a roster starting Mon 9 Nov starts on 9 Nov, everywhere in the app`,
+    r.cycle === '2026-11-09' && r.next === '2026-11-23' && r.req === '2026-11-09' && r.off === 0 && r.sunday === '2026-11-09' && r.headFirst, JSON.stringify(r));
+check('every timezone agrees on the same days', new Set(Object.values(zones).map(r => r.cycle + r.next + r.req + r.period)).size === 1,
+  JSON.stringify(Object.fromEntries(Object.entries(zones).map(([k, r]) => [k, r.period]))));
+
 /* ---------------- 5. no runtime errors ---------------- */
 console.log('\n--- runtime ---');
 check('the app itself never trips the security policy, exports included', cspBlocked.length === provoked && provoked >= 3, cspBlocked.join(' | '));

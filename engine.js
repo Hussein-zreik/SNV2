@@ -39,6 +39,16 @@
 
   /* ---------- pure date / rng / row helpers ---------- */
   function getMonday(d){const dt=new Date(d);const dy=dt.getDay();dt.setDate(dt.getDate()+(dy===0?-6:1-dy));dt.setHours(0,0,0,0);return dt;}
+  // 'YYYY-MM-DD' as a LOCAL calendar day (audit H1). new Date('2026-11-09') is midnight UTC,
+  // which west of Greenwich is still the evening before: getMonday() then snapped to the
+  // previous week and the whole roster started 7 days early. Anything else (a Date, a
+  // timestamp) is passed through unchanged; an empty or unreadable value gives today.
+  function parseLocal(v){
+    const m=typeof v==='string'&&/^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    if(m)return new Date(+m[1],+m[2]-1,+m[3]);
+    const d=v===undefined||v===null||v===''?new Date():new Date(v);
+    return isNaN(d)?new Date():d;
+  }
   function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r;}
   function isoKey(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${dd}`;}
   function mkRng(s){let x=s>>>0||1;return()=>{x^=x<<13;x^=x>>>17;x^=x<<5;return(x>>>0)/0x100000000;};}
@@ -587,7 +597,7 @@
   // one-shot: plan and show only `fill` (what a first Generate does)
   function generateParts(ctx,off,fill,keep){return pickParts(ctx,off,planFortnight(ctx,off,keep),fill,keep);}
 
-  const Engine={getMonday,addDays,isoKey,mkRng,shuffleArr,maxRunLen,streak,dtc,
+  const Engine={getMonday,parseLocal,addDays,isoKey,mkRng,shuffleArr,maxRunLen,streak,dtc,
     groupSeq,pairAt,turnFor,repairRuns,swapRepair,pickWeekdaySubset,computeSchedule,rebalanceRow,
     partOf,unitOf,planFortnight,pickParts,revealParts,generateParts};
 
@@ -596,6 +606,6 @@
     root.Engine=Engine;
     // pure helpers index.html calls directly, kept as bare globals so those call
     // sites don't change (computeSchedule/turnFor get ctx-building wrappers there)
-    for(const k of ['getMonday','addDays','isoKey','mkRng','shuffleArr','maxRunLen'])root[k]=Engine[k];
+    for(const k of ['getMonday','parseLocal','addDays','isoKey','mkRng','shuffleArr','maxRunLen'])root[k]=Engine[k];
   }
 })(typeof window!=='undefined'?window:null);

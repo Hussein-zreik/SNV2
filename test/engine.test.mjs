@@ -24,7 +24,7 @@ const DMIN = [
   { D6: 2, D7: 2, S8: 1, S9: 2, S10: 1 }, { D6: 2, D7: 2, S8: 1, S9: 2, S10: 1 },
   { D6: 2, D7: 2, S8: 1, S9: 2, S10: 1 }, { D7: 2 }, { D7: 2 }
 ];
-const MONDAY = Engine.getMonday(new Date('2026-01-05')); // a fixed anchor Monday
+const MONDAY = Engine.getMonday(Engine.parseLocal('2026-01-05')); // a fixed anchor Monday
 
 // build a ctx for an N-nurse roster (first half Group A, rest Group B)
 function ctx(N, over = {}, opts = {}) {
@@ -48,8 +48,19 @@ const cnt = (sh, d, t) => sh.reduce((a, row) => a + (row[d] === t ? 1 : 0), 0);
 
 /* ---------- pure helpers ---------- */
 test('getMonday snaps any day to its Monday', () => {
-  assert.equal(Engine.isoKey(Engine.getMonday(new Date('2026-01-07'))), '2026-01-05'); // Wed -> Mon
-  assert.equal(Engine.isoKey(Engine.getMonday(new Date('2026-01-11'))), '2026-01-05'); // Sun -> Mon
+  assert.equal(Engine.isoKey(Engine.getMonday(Engine.parseLocal('2026-01-07'))), '2026-01-05'); // Wed -> Mon
+  assert.equal(Engine.isoKey(Engine.getMonday(Engine.parseLocal('2026-01-11'))), '2026-01-05'); // Sun -> Mon
+});
+test('parseLocal reads YYYY-MM-DD as a local calendar day (H1)', () => {
+  const d = Engine.parseLocal('2026-11-09');
+  assert.equal(d.getFullYear(), 2026); assert.equal(d.getMonth(), 10); assert.equal(d.getDate(), 9);
+  assert.equal(d.getHours(), 0);
+  assert.equal(Engine.isoKey(Engine.getMonday(Engine.parseLocal('2026-11-09'))), '2026-11-09', 'a Monday stays that Monday');
+  assert.equal(Engine.isoKey(Engine.getMonday(Engine.parseLocal('2026-11-15'))), '2026-11-09', 'a Sunday snaps back to its Monday');
+  const now = new Date(), t = Engine.parseLocal('');
+  assert.equal(Engine.isoKey(t), Engine.isoKey(now), 'empty means today');
+  assert.equal(Engine.isoKey(Engine.parseLocal('not a date')), Engine.isoKey(now), 'unreadable means today');
+  const x = new Date(2026, 0, 5, 13); assert.equal(Engine.parseLocal(x).getTime(), x.getTime(), 'a Date passes through');
 });
 test('addDays / isoKey', () => {
   assert.equal(Engine.isoKey(Engine.addDays(MONDAY, 13)), '2026-01-18');

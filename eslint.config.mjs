@@ -27,7 +27,7 @@ const browser = {
   // CDN libs loaded via <script> tags
   firebase: 'readonly', ExcelJS: 'readonly', jspdf: 'readonly', jsPDF: 'readonly',
   // provided by engine.js (loaded before the inline script)
-  Engine: 'readonly', getMonday: 'readonly', addDays: 'readonly', isoKey: 'readonly',
+  Engine: 'readonly', getMonday: 'readonly', parseLocal: 'readonly', addDays: 'readonly', isoKey: 'readonly',
   mkRng: 'readonly', shuffleArr: 'readonly', maxRunLen: 'readonly'
 };
 

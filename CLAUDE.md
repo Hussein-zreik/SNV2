@@ -14,8 +14,8 @@ no server. `index.html` is opened directly (or served by GitHub Pages from `main
 ```bash
 npm install            # devDependencies only; the app's own libraries are checked in under vendor/
 npm run lint           # ESLint — bug rules only, never style (see eslint.config.mjs)
-npm run test:unit      # 53 engine unit tests + 27 vendor/security-policy checks, plain Node, ~1s
-npm test               # 162 checks driving the app in headless Chromium, ~60s
+npm run test:unit      # 54 engine unit tests (twice: local time + Los Angeles) + 27 vendor/policy checks, ~2s
+npm test               # 168 checks driving the app in headless Chromium, ~70s
 npm run test:cloud     # 170 checks of firestore.rules, sign-in, roster sync + the staff link, in the
                        # Firebase emulators (needs Java 11+; downloads firebase-tools via npx)
 ```
@@ -349,13 +349,21 @@ manager reads the result in **Staff requests** (`openStaffReq()`), a reference l
   `vendor/firebase-firestore-compat.js` that points the SDK at the emulators, and adding
   `http://127.0.0.1:*` to the policy's `connect-src`. Any policy violation fails the run.
 
-## Stale documentation
+## Dates are local calendar days
 
-`NIGHT_SHIFT_ROTATION.md` describes an **older** night rotation (pairs advancing by 2
-positions, resetting every 5 and 9 cycles). The engine now tiles a configurable night list
-with a configurable N7 minimum, and RNs can be removed from the rotation in
-Settings → Night cycle. Treat that file as historical; trust `engine.js` and
-`test/engine.test.mjs`.
+A stored date is a `'YYYY-MM-DD'` string meaning a day on the wall calendar, not an
+instant. Parse it with `parseLocal()` (from `engine.js`, also a global in the page) or
+`new Date(iso+'T00:00:00')`, **never** `new Date('YYYY-MM-DD')`: that is midnight UTC,
+which west of Greenwich is the evening before, so `getMonday()` snapped back a week and
+the whole roster started 7 days early (audit H1). `test:unit` runs the engine tests in
+`America/Los_Angeles` as well as the machine's timezone, and the audit checks the start
+date in five timezones.
+
+## Documentation
+
+`README.md` is the overview for a new reader. `NIGHT_SHIFT_ROTATION.md` describes the
+night and weekend turns as `turnFor()` computes them; its example table came from running
+the engine, so regenerate it if the rotation changes.
 
 ## Security
 

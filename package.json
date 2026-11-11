@@ -5,7 +5,7 @@
   "description": "Single-file RN rotating shift scheduler with requests, fairness reporting and cloud sync",
   "scripts": {
     "lint": "eslint .",
-    "test:unit": "node test/engine.test.mjs && node test/vendor.test.mjs",
+    "test:unit": "node test/engine.test.mjs && TZ=America/Los_Angeles node test/engine.test.mjs && node test/vendor.test.mjs",
     "test": "node test/audit.mjs",
     "test:cloud": "npx --yes firebase-tools@13.35.1 emulators:exec --only firestore,auth --project demo-snv2 \"node test/cloud.mjs\""
   },
