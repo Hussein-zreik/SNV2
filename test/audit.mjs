@@ -1140,6 +1140,31 @@ check('at 70% the meter turns amber and says to plan ahead, still no alarm', siz
 check('at 90% it turns red and the problem banner says so, once', size.bad === true && size.once === true);
 check('the meter is hidden when there is no connection', size.hiddenOffline === true);
 
+/* ---------------- 4l. an update from the cloud keeps the fortnight on screen ---------------- */
+const keepView = await page.evaluate(() => {
+  const out = {}, keep = { start: startDateStr, input: document.getElementById('startDate').value, off: cycleOffset };
+  startDateStr = '2026-11-09'; document.getElementById('startDate').value = '2026-11-09';
+  cycleOffset = 3; render();
+  const shown = cycleStartISO(cycleOffset);
+  const incoming = JSON.parse(JSON.stringify(cloudStateObj())); incoming.names = incoming.names.slice(); incoming.names[0] = 'Changed elsewhere';
+  adoptCloudState(incoming, '');
+  out.same = cycleOffset === 3 && cycleStartISO(cycleOffset) === shown && names[0] === 'Changed elsewhere';
+  const moved = JSON.parse(JSON.stringify(cloudStateObj())); moved.startDate = '2026-10-26';   // the other device moved the start two weeks earlier
+  adoptCloudState(moved, '');
+  out.anchorMoved = cycleStartISO(cycleOffset) === shown && cycleOffset === 4;
+  const odd = JSON.parse(JSON.stringify(cloudStateObj())); odd.startDate = '2026-11-02';        // one week earlier: fortnights now start on other Mondays
+  adoptCloudState(odd, '');
+  const keys = cycleDayKeys(cycleOffset);
+  out.oddAnchor = keys.includes(shown);
+  out.shown = shown; out.now = cycleStartISO(cycleOffset);
+  startDateStr = keep.start; document.getElementById('startDate').value = keep.input; cycleOffset = keep.off; render();
+  return out;
+});
+console.log('\n--- cloud updates keep the view ---');
+check('an update from another device keeps the fortnight being edited on screen', keepView.same === true, JSON.stringify(keepView));
+check('if the other device moved the start date, the same fortnight is found again', keepView.anchorMoved === true, JSON.stringify(keepView));
+check('if fortnights now start on other Mondays, the fortnight shown still contains the week being edited', keepView.oddAnchor === true, JSON.stringify(keepView));
+
 /* ---------------- 5. no runtime errors ---------------- */
 console.log('\n--- runtime ---');
 const provokedAll = cspBlocked.filter(v => /evil\.example|eval|script-src-attr/.test(v)).length;   // the deliberate attempts in 4g and 4j

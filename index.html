@@ -11,7 +11,7 @@
      (Firebase sign-in and the roster), so a script that got onto the page could not
      send the roster anywhere else. apis.google.com and the firebaseapp.com frame are
      what Firebase sign-in loads on phones. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-hy0AiLyCaNV1/Z3UYqD/q3yBxgVBwN9vdKrGDDqK7xQ=' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-oRBUPpOTHEPWXI+4EZwNez46hnVdFU4H8kefmuVGel4=' https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://www.google.com; connect-src https://*.googleapis.com; frame-src https://schedule-nursing-f14e5.firebaseapp.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RN Rotating Schedule</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1759,13 +1759,16 @@ function showClashes(uid,log){
 // put a roster that came from the cloud on screen and in this device's storage.
 // `label` records what was here before as an undo step (first load on a device, or
 // taking over the old shared copy) so nothing local is lost without a way back.
+// The fortnight on screen stays on screen: an update from another device must not
+// pull the manager away from the week they are editing. If the other device changed
+// the start date, the same calendar fortnight is found again under the new start.
 function adoptCloudState(state,label){
-  const before=label?snapshot():null;
+  const before=label?snapshot():null,shown=parseLocal(cycleStartISO(cycleOffset));
   applyingRemote=true;
   try{
     applyStateObject(state);
     const si=document.getElementById('startDate'); if(startDateStr)si.value=startDateStr;
-    cycleOffset=autoOffset(startDateStr);
+    cycleOffset=Math.floor(Math.round((shown-getMonday(parseLocal(si.value||startDateStr)))/86400000)/14);
     if(before)pushHistory(label,before);
     render();saveState();                    // saveState skips the cloud while applyingRemote
   }finally{applyingRemote=false;}

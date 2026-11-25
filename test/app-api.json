@@ -6,6 +6,7 @@
     "PERSIST",
     "STORE_KEY",
     "addRN",
+    "adoptCloudState",
     "applyStateObject",
     "autoOffset",
     "clashText",
@@ -140,6 +141,7 @@
   "test/cloud.mjs": [
     "STORE_KEY",
     "addDays",
+    "autoOffset",
     "closeCloud",
     "closeStaffReq",
     "cloudAuth",
@@ -148,6 +150,8 @@
     "cloudStateObj",
     "cloudStatus",
     "cloudUid",
+    "cycleOffset",
+    "cycleStartISO",
     "dismissProblems",
     "dismissSyncNote",
     "history",
@@ -175,6 +179,7 @@
     "sreqState",
     "sreqUrl",
     "staff",
+    "startDateStr",
     "undo"
   ]
 }

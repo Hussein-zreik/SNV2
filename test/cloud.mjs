@@ -321,6 +321,12 @@ check('its own earlier roster is kept as an undo step', await dev2.evaluate(() =
 check('"keep me signed in" is remembered on that device', await dev2.evaluate(() => localStorage.getItem('rn_signed') === '1'));
 await mgr.evaluate(() => { const b = snapshot(); names[1] = 'Edited On One'; pushHistory('rename', b); render(); saveState(); });
 check('an edit on one device reaches the other', await until(dev2, () => names[1] === 'Edited On One'));
+await dev2.evaluate(() => { cycleOffset = 3; render(); });
+const away = await dev2.evaluate(() => cycleStartISO(cycleOffset));
+await mgr.evaluate(() => { const b = snapshot(); names[1] = 'Edited Again'; pushHistory('rename', b); render(); saveState(); });
+check('a device looking at another fortnight stays there when an update arrives',
+  await until(dev2, () => names[1] === 'Edited Again') && await dev2.evaluate(a => cycleOffset === 3 && cycleStartISO(cycleOffset) === a, away));
+await dev2.evaluate(() => { cycleOffset = autoOffset(startDateStr); render(); });
 
 console.log('--- two devices editing at the same time ---');
 const K = await mgr.evaluate(() => ({ d1: '2031-03-03', d2: '2031-03-04', a: rid(4), b: rid(5), c: rid(6), nameC: names[6] }));
@@ -387,7 +393,7 @@ watch(off, 'second device, offline');
 await noFirebase(off);
 await off.goto(BASE + '/index.html');
 check('a device that stays signed in opens with no internet', !(await locked(off)) && await until(off, () => cloudStatus === 'unavailable') && !(await locked(off)));
-check('offline, it shows the roster it last synced', await off.evaluate(() => names[0] === 'Legacy Nurse' && names[1] === 'Edited On One'));
+check('offline, it shows the roster it last synced', await off.evaluate(() => names[0] === 'Legacy Nurse' && names[1] === 'Edited Again'));
 await off.evaluate(() => { const b = snapshot(); names[2] = 'Edited Offline'; pushHistory('rename', b); render(); saveState(); });
 await off.close();
 const back = await dctx.newPage();
